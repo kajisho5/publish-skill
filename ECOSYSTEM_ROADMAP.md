@@ -14,7 +14,7 @@ Scaffold: README with `# publish` only.
 | Owned job | Status | Note |
 |---|---|---|
 | 配信先アップロード | missing |  |
-| 配信プラットフォーム仕様 | missing | the platform table already lives in ffmpeg-skill `_platforms.py`; read it, do not copy it |
+| アップロード制限 | missing | upload-side limits only (file size, duration, rate limits, metadata fields); the platform delivery specs belong to ffmpeg-skill `_platforms.py` -- read them, do not copy them |
 
 ## Wiring
 
@@ -37,7 +37,7 @@ None, and the agent has no SkillSpec for publishing.
 
 ## Boundaries
 
-Platform spec ownership vs ffmpeg-skill `_platforms.py` -- owner decision needed.
+Platform delivery specs (配信プラットフォーム仕様) are owned by ffmpeg-skill (owner decision, 2026-10-30); this skill reads them and owns only upload-side limits (アップロード制限).
 
 ---
 Engine for every media operation: [ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill) (42 tools, treated as complete). Orchestrator: [video-production-agent](https://github.com/kajisho5/video-production-agent).
