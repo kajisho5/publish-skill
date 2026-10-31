@@ -18,8 +18,9 @@ from .upload import TOKEN_BINDS, TOKEN_PREFIX
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
                   "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
                   "[--caption <file> ... --caption-language <bcp47> ...]"]
-# the only modules with network code: one per implemented uploader (ADR-004 .. ADR-009)
-NETWORK_MODULES = ["src/publish_skill/platforms/facebook.py", "src/publish_skill/platforms/linkedin.py", "src/publish_skill/platforms/tiktok.py",
+# the only modules with network code: one per implemented uploader (ADR-004 .. ADR-010)
+NETWORK_MODULES = ["src/publish_skill/platforms/facebook.py", "src/publish_skill/platforms/linkedin.py",
+                   "src/publish_skill/platforms/reels.py", "src/publish_skill/platforms/tiktok.py",
                    "src/publish_skill/platforms/vimeo.py",
                    "src/publish_skill/platforms/x.py", "src/publish_skill/platforms/youtube.py"]
 
@@ -39,7 +40,8 @@ _OP_TOOLS = {
                               "only; TikTok: the Content Posting API Direct Post, title and privacy only; X: the chunked media upload "
                               "and one public post, its text the title; LinkedIn: the Videos API multipart upload and one public post, "
                               "its commentary the title; Facebook: the Resumable Upload API and one Page video, title, description and "
-                              "privacy (public or unlisted) only). Dry run unless --confirm carries the token the dry run printed for "
+                              "privacy (public or unlisted) only; Instagram Reels: a resumable REELS container, the rupload upload and "
+                              "media_publish, the caption the title). Dry run unless --confirm carries the token the dry run printed for "
                               "exactly this file, metadata and platform; then a receipt, redacted",
                "argv": ["upload", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--confirm <token>]", "--json"]},
 }
@@ -125,7 +127,12 @@ def contract() -> Dict[str, Any]:
                          "Facebook: private (unpublished) videos, tags, a thumbnail, captions, scheduling, backdating, "
                          "targeting, crossposting and Reels (refused or not sent)",
                          "Facebook: Facebook Login and exchanging tokens (`auth login` stores the app id, a user access "
-                         "token, the Page id and a Page access token)"],
+                         "token, the Page id and a Page access token)",
+                         "Instagram Reels: private or unlisted posts (there are none), a description, tags, a cover, "
+                         "captions files, collaborators, location, audio name and share_to_feed (refused or not sent)",
+                         "Instagram Reels: Facebook Login for Business and refreshing the token (`auth login` stores the "
+                         "account id and an access token); resuming an upload at a byte offset (no offset query is "
+                         "documented: an interrupted upload is sent again whole)"],
         "tools": tools(),
         "platforms": {"registered": {pid: get_platform(pid).spec() for pid in platform_ids()},
                       "per_platform_pr": "roadmap step 5"},
@@ -154,7 +161,8 @@ def contract() -> Dict[str, Any]:
                                         "*.tiktokapis.com (the upload_url TikTok returns; https only)",
                                         "api.x.com", "api.linkedin.com",
                                         "*.linkedin.com (the signed uploadUrl LinkedIn returns; https only)",
-                                        "graph.facebook.com", "graph-video.facebook.com"],
+                                        "graph.facebook.com", "graph-video.facebook.com",
+                                        "rupload.facebook.com"],
                       "upload_protocol": {"youtube": {
                           "oauth": "refresh token -> access token (https://oauth2.googleapis.com/token)",
                           "resumable": "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
@@ -235,7 +243,23 @@ def contract() -> Dict[str, Any]:
                                      "upload: exponential backoff (or Retry-After), then file_offset and the rest of the "
                                      "file; the session request only on answers; the publish only on 429 or a "
                                      "throttling code (never twice)",
-                          "decision": "docs/decisions.md ADR-009"}},
+                          "decision": "docs/decisions.md ADR-009"},
+                          "reels": {
+                          "auth": "an access token from Facebook Login for Business with instagram_basic and "
+                                  "instagram_content_publish (the access_token parameter on graph.facebook.com, "
+                                  "Authorization: OAuth on rupload.facebook.com); Graph API v26.0",
+                          "resumable": "https://developers.facebook.com/docs/instagram-platform/content-publishing/",
+                          "methods": ["POST /v26.0/<IG_ID>/media (media_type=REELS, upload_type=resumable, caption)",
+                                      "POST rupload /ig-api-upload/v26.0/<container> (offset 0, file_size; the file)",
+                                      "GET /v26.0/<container>?fields=status_code (once a minute, at most 5 times)",
+                                      "POST /v26.0/<IG_ID>/media_publish (creation_id)"],
+                          "chunk_bytes": "the whole file, streamed; an interrupted upload is sent again whole",
+                          "metadata_sent": ["caption (the title)"],
+                          "retries": "5xx, 429, debug_info.retriable, connection errors and timeouts on the upload: "
+                                     "exponential backoff (or Retry-After), then the whole file again; the container "
+                                     "request only on 429/5xx or Graph's transient and throttling codes; the publish "
+                                     "only when throttled (never twice)",
+                          "decision": "docs/decisions.md ADR-010"}},
                       "shell": False, "input_is_read_only": True,
                       "child_processes": "adapter.py only: [python, <ffmpeg-skill>/scripts/<tool>.py, ...] as an argv list "
                                     "(tools: _contract, export --list, check), never a shell; ffmpeg-skill declares no "

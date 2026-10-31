@@ -8,6 +8,7 @@ from ..errors import PublishError
 from .base import Uploader, UploadRequest
 from .facebook import FacebookUploader
 from .linkedin import LinkedInUploader
+from .reels import ReelsUploader
 from .tiktok import TikTokUploader
 from .vimeo import VimeoUploader
 from .x import XUploader
@@ -15,7 +16,8 @@ from .youtube import YouTubeUploader
 
 _REGISTRY: Dict[str, Type[Uploader]] = {YouTubeUploader.id: YouTubeUploader, VimeoUploader.id: VimeoUploader,
                                         TikTokUploader.id: TikTokUploader, XUploader.id: XUploader,
-                                        LinkedInUploader.id: LinkedInUploader, FacebookUploader.id: FacebookUploader}
+                                        LinkedInUploader.id: LinkedInUploader, FacebookUploader.id: FacebookUploader,
+                                        ReelsUploader.id: ReelsUploader}
 
 __all__ = ["Uploader", "UploadRequest", "get_platform", "platform_ids"]
 

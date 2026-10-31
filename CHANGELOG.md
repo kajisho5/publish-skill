@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The Instagram Reels uploader (roadmap step 5, the sixth and last further platform; step 5 is done).
+
+- ADR-010: `publish upload --platform reels --confirm <token>` creates a REELS container with `upload_type=resumable` (`POST graph.facebook.com/v26.0/<IG_ID>/media`), uploads the file to `rupload.facebook.com/ig-api-upload/v26.0/<container>` (`Authorization: OAuth`, `offset: 0`, `file_size`, streamed), queries `status_code` once a minute for at most five minutes until `FINISHED`, then makes one `media_publish`. The account id and an access token from Facebook Login for Business (`PUBLISH_INSTAGRAM_USER_ID`, `PUBLISH_INSTAGRAM_ACCESS_TOKEN`), environment or keychain. Standard library only, in `platforms/reels.py`, the seventh module with network code.
+- Exactly the bound request: the title as the caption, nothing added. A reel published through the API is public, so `public` is the only privacy (`plan` FAILs the default `private`); a description, tags, a thumbnail, captions files, or a file other than .mp4/.mov are refused before a token is printed.
+- No byte-offset query is documented, so an interrupted upload (no answer, 5xx, 429, `debug_info.retriable`) is sent again whole from offset 0 with exponential backoff; the last block is held back unless the file still has the bound sha256. The publish is retried only when throttled: no answer, a 5xx or code 1/2 is `UPLOAD_INTERRUPTED` with `retryable: false`, so a reel is never published twice. `ERROR` and `EXPIRED` are `UPLOAD_REJECTED`.
+- The Instagram Reels upload-limit table (cited, 2026-10-31): 300 MB, 3 s to 15 minutes, MOV or MP4, a caption of 2200 characters, 30 hashtags and 20 @ tags (`plan` FAILs the length; the hashtag and @ counts are heuristic and only WARN), 100 API-published posts per 24 hours (reported). `plan` reads ffmpeg-skill's `reels` delivery spec.
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The Facebook uploader (roadmap step 5, the fifth further platform).
 
 - ADR-009: `publish upload --platform facebook --confirm <token>` uploads the video with the Resumable Upload API (`POST /<APP_ID>/uploads` for a session, `POST /upload:<id>` with `file_offset` and the file streamed in one body, `GET /upload:<id>` for the offset to resume from), then publishes one video on the Page with `POST graph-video.facebook.com/v26.0/<PAGE_ID>/videos` and the file handle. Four values (`PUBLISH_FACEBOOK_APP_ID`, `PUBLISH_FACEBOOK_USER_ACCESS_TOKEN`, `PUBLISH_FACEBOOK_PAGE_ID`, `PUBLISH_FACEBOOK_PAGE_ACCESS_TOKEN`), environment or keychain. Standard library only, in `platforms/facebook.py`, the sixth module with network code.

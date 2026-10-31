@@ -1,7 +1,8 @@
 """Uploader base class. An uploader is registered in platforms/__init__.py; only registered ids can be named on the
 command line. The base `upload` is a stub that raises NOT_IMPLEMENTED and opens no connection (ADR-001); a real
 uploader replaces it in the roadmap step named by `roadmap_step` (YouTube: step 4, ADR-004; Vimeo: step 5, ADR-005;
-TikTok: step 5, ADR-006; X: step 5, ADR-007; LinkedIn: step 5, ADR-008; Facebook: step 5, ADR-009).
+TikTok: step 5, ADR-006; X: step 5, ADR-007; LinkedIn: step 5, ADR-008; Facebook: step 5, ADR-009;
+Instagram Reels: step 5, ADR-010).
 `upload` is called only by upload.py's gate, with the request the confirmation token bound and the credentials
 credentials.load returned."""
 from __future__ import annotations

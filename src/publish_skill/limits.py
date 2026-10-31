@@ -78,6 +78,11 @@ _FB_PAGE_VIDEOS = "https://developers.facebook.com/docs/graph-api/reference/page
 _FB_OVERVIEW = "https://developers.facebook.com/docs/video-api/overview"
 _FB_ERRORS = "https://developers.facebook.com/docs/graph-api/guides/error-handling"
 _FB_CHECK = "ffmpeg-skill `check --platform facebook` (scripts/_platforms.py owns the value)"
+# Instagram Reels (roadmap step 5, ADR-010): the Instagram Platform content publishing guide and the IG User media
+# reference on developers.facebook.com (Graph API v26.0), read on the same day.
+_IG_PUBLISH = "https://developers.facebook.com/docs/instagram-platform/content-publishing/"
+_IG_MEDIA = "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media"
+_IG_CHECK = "ffmpeg-skill `check --platform reels` (scripts/_platforms.py owns the value)"
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -310,6 +315,59 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                    "will only stay valid for two hours", checked=False,
                                    note="this skill reads an access token only; refreshing it (offline.access) is not "
                                         "implemented (ADR-007)"),
+    },
+    "reels": {
+        # the video file: the Reels video specifications. "300 MB" is read as decimal, the smaller reading.
+        "video.max_bytes": _known(300 * 1000 ** 2, "bytes", _IG_MEDIA, "File size: 300 MB maximum.",
+                                  documented_as="300 MB"),
+        "video.min_duration_s": _known(3, "seconds", _IG_MEDIA, "Duration: 3 seconds minimum, 15 minutes maximum."),
+        "video.max_duration_s": _known(15 * 60, "seconds", _IG_MEDIA, "Duration: 3 seconds minimum, 15 minutes maximum."),
+        "video.file_formats": _known([".mp4", ".mov"], "file extensions", _IG_MEDIA,
+                                     "Container: MOV or MP4 (MPEG-4 Part 14), no edit lists, moov atom at the front of "
+                                     "the file.", enforced=True,
+                                     note="the moov-atom and edit-list rules are the delivery spec's (ffmpeg-skill)"),
+        "video.codecs": _delegated("video codec", _IG_CHECK),
+        "video.resolution": _delegated("frame size", _IG_CHECK),
+        "video.aspect": _delegated("aspect ratio", _IG_CHECK),
+        "video.fps": _delegated("frame rate", _IG_CHECK),
+        "upload.chunk_bytes": _known("one body from offset 0 (no chunk size and no offset query is documented)",
+                                     "bytes", _IG_PUBLISH, "offset: the first byte being upload, generally 0",
+                                     checked=False, used="the whole file, streamed from disk; an interrupted upload is "
+                                                         "sent again whole"),
+        "upload.session_validity_s": _known(24 * 3600, "seconds", _IG_PUBLISH,
+                                            "EXPIRED: The container was not published within 24 hours and has expired.",
+                                            checked=False),
+        # metadata: the caption is the bound title
+        "title.max_chars": _known(2200, "characters", _IG_MEDIA, "caption ... Maximum 2200 characters, 30 hashtags, and "
+                                  "20 @ tags."),
+        "title.max_hashtags": _known(30, "hashtags", _IG_MEDIA, "caption ... Maximum 2200 characters, 30 hashtags, and "
+                                     "20 @ tags.", note="how Instagram recognises a hashtag is not stated: plan counts "
+                                                        "#word tokens and WARNs (not FAILs) above the limit"),
+        "title.max_mentions": _known(20, "@ tags", _IG_MEDIA, "caption ... Maximum 2200 characters, 30 hashtags, and 20 "
+                                     "@ tags.", note="how Instagram recognises an @ tag is not stated: plan counts @name "
+                                                     "tokens and WARNs (not FAILs) above the limit"),
+        "title.forbidden_chars": _unknown("no forbidden characters are stated", [_IG_MEDIA, _IG_PUBLISH]),
+        "privacy.values": _known(["public"], "enum (this skill's names)", _IG_MEDIA,
+                                 "the container has no field that makes a post private or unlisted (share_to_feed only "
+                                 "chooses the Feed and Reels tabs or the Reels tab)",
+                                 not_offered="private and unlisted: a reel published through the API is public on the "
+                                             "account",
+                                 api_default="public; this skill's default (`private`) is a FAIL here, so --privacy "
+                                             "public must be given"),
+        "quota.daily_posts": _known(100, "API-published posts per 24-hour moving period", _IG_PUBLISH,
+                                    "Instagram accounts are limited to 100 API-published posts within a 24-hour moving "
+                                    "period.", checked=False,
+                                    note="the carousel section of the same page says \"50 published posts within a "
+                                         "24-hour period\"; the two are not reconciled there. Not checked offline"),
+        "rate_limit.requests": _unknown("no request rate is stated beyond the publishing limit; throttling is typed "
+                                        "(Graph codes 4, 17, 341)", [_IG_PUBLISH]),
+        "token.scopes": _known(["instagram_basic", "instagram_content_publish"], "permissions (Facebook Login for "
+                               "Business)", _IG_PUBLISH,
+                               "Resumable upload sessions are only for apps that have implemented Facebook Login for "
+                               "Business ... instagram_basic, instagram_content_publish", checked=False,
+                               note="pages_read_engagement too with a Page access token; not checked offline: "
+                                    "Instagram answers with code 190, 10 or 200-299 (AUTH_FAILED)"),
+        "token.lifetime_s": _unknown("the token lifetime is not stated on the pages read", [_IG_PUBLISH]),
     },
     "facebook": {
         # the video file: no size or duration limit is stated on the pages read (the Video API overview, the publishing

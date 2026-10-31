@@ -63,7 +63,7 @@ def file_checks(platform_id: str, path: str, size: int) -> List[Dict[str, Any]]:
         ok = ext in formats
         # WARN on YouTube (the bytes decide); FAIL where the table marks the list enforced (TikTok: the upload's
         # Content-Type must name one of them, ADR-006; X: initialize's media_type, ADR-007; LinkedIn: "File format: MP4.",
-        # ADR-008; Facebook: the upload session's file_type, ADR-009)
+        # ADR-008; Facebook: the upload session's file_type, ADR-009; Instagram Reels: MOV or MP4, ADR-010)
         bad = "FAIL" if L.limits_of(platform_id)["video.file_formats"].get("enforced") else "WARN"
         rows.append(_row("file format", "PASS" if ok else bad, ext or "(no extension)", formats, platform_id,
                          "video.file_formats", "" if ok else "re-export to .mp4: ffmpeg-skill export --preset <platform>"))
@@ -144,6 +144,13 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
         rows.append(_row("title length", "PASS" if max_title is None or n <= max_title else "FAIL", n, max_title,
                          platform_id, title_key,
                          "" if max_title is None or n <= max_title else f"shorten the title to {max_title} {unit}"))
+        for key, sign, what in (("title.max_hashtags", "#", "hashtags"), ("title.max_mentions", "@", "@ tags")):
+            most = L.value(platform_id, key)                           # Instagram's caption (ADR-010)
+            if most is not None:
+                n = len(re.findall(r"(?:^|(?<=\s))" + sign + r"\w+", md.title))
+                rows.append(_row(f"title {what}", "PASS" if n <= most else "WARN", n, most, platform_id, key,
+                                 "" if n <= most else f"keep at most {most} {what} (counted as {sign}word; the "
+                                                      "platform's own count decides)"))
         if L.value(platform_id, "title.forbidden_chars") is not None:      # unknown: nothing is checked (Vimeo)
             bad = _forbidden(md.title, L.value(platform_id, "title.forbidden_chars"))
             rows.append(_row("title characters", "FAIL" if bad else "PASS", bad,
