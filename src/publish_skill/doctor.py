@@ -1,9 +1,10 @@
 """`publish doctor`: what is ready, what is missing and how to get it. It never opens a network connection, never
-uploads, and reports credentials as `present` / `absent` only.
+uploads, and reports credentials as `present` / `absent` only. When ffmpeg-skill is found, its capabilities are
+detected by running its contract and `export --list` locally (adapter.py; ffmpeg-skill declares no network use).
 
-status: ok (every platform implemented with complete credentials, ffmpeg-skill found) | degraded (a platform not
-implemented or without credentials, or ffmpeg-skill not found: the skill itself works, exit 0) | fail (Python too old,
-exit 1)."""
+status: ok (every platform implemented with complete credentials, ffmpeg-skill found and supported) | degraded (a
+platform not implemented or without credentials, or ffmpeg-skill not found or unsupported: the skill itself works,
+exit 0) | fail (Python too old, exit 1)."""
 from __future__ import annotations
 
 import os
@@ -14,11 +15,12 @@ from typing import Any, Dict, List, Optional
 
 from . import SKILL_ID, __version__
 from . import credentials as creds
+from .adapter import detect
 from .platforms import get_platform, platform_ids
 
 DOCTOR_SCHEMA = f"{SKILL_ID}/doctor@1"
-# op -> roadmap step that implements it; none is implemented in this release (ADR-001)
-IMPLEMENTED_OPS: Dict[str, bool] = {"plan": False, "upload": False}
+# op -> roadmap step that implements it; plan arrived in step 2 (ADR-002), the uploaders arrive in step 4
+IMPLEMENTED_OPS: Dict[str, bool] = {"plan": True, "upload": False}
 OP_STEP = {"plan": 2, "upload": 4}
 FFMPEG_SKILL_ENV = ("PUBLISH_FFMPEG_SKILL_DIR", "VIDEO_AGENT_FFMPEG_SKILL_DIR")
 FFMPEG_SKILL_MARKER = "scripts/_contract.py"
@@ -34,8 +36,8 @@ def ffmpeg_skill_candidates(explicit: Optional[str] = None) -> List[str]:
 
 
 def locate_ffmpeg_skill(explicit: Optional[str] = None) -> Dict[str, Any]:
-    """Where the ffmpeg-skill checkout is. Only located here; step 2 reads its platform specs (`export --list`) and
-    checks the tools and flags it uses by capability detection."""
+    """Where the ffmpeg-skill checkout is (by its marker file; nothing is run). adapter.detect then checks the tools
+    and flags `plan` uses by capability detection."""
     tried = ffmpeg_skill_candidates(explicit)
     for c in tried:
         if (Path(c) / FFMPEG_SKILL_MARKER).is_file():
@@ -63,6 +65,11 @@ def doctor(ffmpeg_skill_dir: Optional[str] = None, offline: bool = False) -> Dic
     if not py_ok:
         problems.append("python: needs >= 3.9")
     checks["ffmpeg_skill"] = locate_ffmpeg_skill(ffmpeg_skill_dir)
+    if checks["ffmpeg_skill"]["status"] == "OK":
+        det = detect(checks["ffmpeg_skill"]["path"])
+        checks["ffmpeg_skill"]["capabilities"] = det
+        if det["status"] != "OK":
+            checks["ffmpeg_skill"]["status"] = "UNSUPPORTED"
     plats = platforms_report()
     checks["platforms"] = plats
     checks["operations"] = {op: {"implemented": IMPLEMENTED_OPS[op], "roadmap_step": OP_STEP[op]} for op in IMPLEMENTED_OPS}
@@ -73,8 +80,11 @@ def doctor(ffmpeg_skill_dir: Optional[str] = None, offline: bool = False) -> Dic
         absent = sorted(n for n, s in p["credentials"]["variables"].items() if s != "present")
         if absent:
             warnings.append(f"platform {pid}: credentials absent from the environment: {', '.join(absent)}")
-    if checks["ffmpeg_skill"]["status"] != "OK":
-        warnings.append("ffmpeg-skill: not found (needed from roadmap step 2, `publish plan`)")
+    if checks["ffmpeg_skill"]["status"] == "MISSING":
+        warnings.append("ffmpeg-skill: not found (`publish plan` reports its delivery spec rows as UNCHECKED)")
+    elif checks["ffmpeg_skill"]["status"] != "OK":
+        warnings.append("ffmpeg-skill: unsupported (" + "; ".join(checks["ffmpeg_skill"]["capabilities"]["problems"])
+                        + "); `publish plan` reports its delivery spec rows as UNCHECKED")
     status = "fail" if problems else ("degraded" if warnings else "ok")
     return {
         "schema": DOCTOR_SCHEMA,
@@ -86,5 +96,5 @@ def doctor(ffmpeg_skill_dir: Optional[str] = None, offline: bool = False) -> Dic
         "ready_platforms": sorted(pid for pid, p in plats.items() if p["ready"]),
         "problems": problems,
         "warnings": warnings,
-        "network": "doctor never uses the network; `upload` uses it only with a matching --confirm token",
+        "network": "doctor and plan never use the network; `upload` uses it only with a matching --confirm token",
     }

@@ -5,7 +5,7 @@ Written from a read-only audit of this repository on 2026-10-30. Each step below
 
 ## Where it stands
 
-Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). No uploader is implemented; nothing is uploaded yet.
+Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). `publish plan` ([#5](https://github.com/kajisho5/publish-skill/pull/5), ADR-002): the deliverable and its metadata against YouTube's cited upload limits and ffmpeg-skill's `check`, offline; the token binds the metadata. No uploader is implemented; nothing is uploaded yet.
 
 ## What this repository owns
 
@@ -14,7 +14,7 @@ Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contr
 | Owned job | Status | Note |
 |---|---|---|
 | 配信先アップロード | missing |  |
-| アップロード制限 | missing | upload-side limits only (file size, duration, rate limits, metadata fields); the platform delivery specs belong to ffmpeg-skill `_platforms.py` -- read them, do not copy them |
+| アップロード制限 | YouTube ([#5](https://github.com/kajisho5/publish-skill/pull/5)) | upload-side limits only (file size, duration, rate limits, metadata fields); the platform delivery specs belong to ffmpeg-skill `_platforms.py` -- read them, do not copy them |
 
 ## Wiring
 
@@ -24,7 +24,7 @@ None, and the agent has no SkillSpec for publishing.
 
 - [x] **1. Scaffold** — package, contract/doctor (network: true), SKILL.md, CI on 3 OSes ([#4](https://github.com/kajisho5/publish-skill/pull/4))
   - Done when: contract validates against the OS schema
-- [ ] **2. `publish plan` (offline)** — validate deliverable + title/description/tags/privacy/thumbnail/captions against platform limits; encode spec from ffmpeg-skill export --list / check
+- [x] **2. `publish plan` (offline)** — validate deliverable + title/description/tags/privacy/thumbnail/captions against platform limits; encode spec from ffmpeg-skill export --list / check ([#5](https://github.com/kajisho5/publish-skill/pull/5))
   - Done when: structured FAIL on an over-long title or wrong aspect, no network
 - [ ] **3. Credentials** — `publish auth login|status|logout`, OS keychain, secrets redacted everywhere
   - Done when: no token in stdout/stderr/receipt

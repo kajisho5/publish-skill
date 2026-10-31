@@ -34,10 +34,21 @@ jobs:
         run: |
           publish upload README.md --platform youtube --json | tee dry.json
           python -c "import json; d=json.load(open('dry.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
+      - name: plan gives a structured FAIL on an over-long title, offline (no ffmpeg-skill here -> its rows UNCHECKED)
+        shell: bash
+        run: |
+          set +e
+          publish plan README.md --platform youtube --title "$(printf 'x%.0s' $(seq 101))" --ffmpeg-skill "$RUNNER_TEMP/none" --json > plan.json
+          rc=$?
+          set -e
+          test "$rc" = 1
+          python -c "import json; d=json.load(open('plan.json')); t=[r for r in d['checks'] if r['check']=='title length'][0]; assert d['verdict']=='FAIL' and t['status']=='FAIL' and not d['network_used'] and not d['uploaded'], d"
 
   conformance:
     # Read-only checkout of AI-video-production-OS: the registry conformance checks and the capability contract JSON
-    # Schema (roadmap step 1, "Done when: contract validates against the OS schema"). Nothing may skip here.
+    # Schema (roadmap step 1, "Done when: contract validates against the OS schema"). Read-only checkout of ffmpeg-skill
+    # and FFmpeg: `publish plan` against the real `check` (roadmap step 2, "structured FAIL on an over-long title or
+    # wrong aspect, no network"). Nothing may skip here.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +56,12 @@ jobs:
         with:
           repository: kajisho5/AI-video-production-OS
           path: vendor/AI-video-production-OS
+      - uses: actions/checkout@v4
+        with:
+          repository: kajisho5/ffmpeg-skill
+          path: vendor/ffmpeg-skill
+      - name: FFmpeg (ffmpeg-skill's check runs ffprobe)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -52,6 +69,7 @@ jobs:
       - name: All tests run, none skipped
         env:
           AI_VIDEO_PRODUCTION_OS_DIR: ${{ github.workspace }}/vendor/AI-video-production-OS
+          PUBLISH_FFMPEG_SKILL_DIR: ${{ github.workspace }}/vendor/ffmpeg-skill
         run: |
           set -o pipefail
           python -m unittest discover -s tests -v 2>&1 | tee test.log
