@@ -56,7 +56,7 @@ def file_checks(platform_id: str, path: str, size: int) -> List[Dict[str, Any]]:
         ext = os.path.splitext(path)[1].lower()
         ok = ext in formats
         # WARN on YouTube (the bytes decide); FAIL where the table marks the list enforced (TikTok: the upload's
-        # Content-Type must name one of them, ADR-006)
+        # Content-Type must name one of them, ADR-006; X: initialize's media_type, ADR-007)
         bad = "FAIL" if L.limits_of(platform_id)["video.file_formats"].get("enforced") else "WARN"
         rows.append(_row("file format", "PASS" if ok else bad, ext or "(no extension)", formats, platform_id,
                          "video.file_formats", "" if ok else "re-export to .mp4: ffmpeg-skill export --preset <platform>"))
@@ -109,13 +109,24 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
                       tags=[] if "tags" in unsupported else md.tags, privacy=md.privacy,
                       thumbnail=None if "thumbnail" in unsupported else md.thumbnail,
                       captions=[] if "captions" in unsupported else md.captions)
-    # YouTube and Vimeo count characters, TikTok UTF-16 code units ("runes"): each table has one of the two keys
+    # YouTube and Vimeo count characters, TikTok UTF-16 code units ("runes"), X weighted characters (twitter-text):
+    # each table has one of the three keys
     by_utf16 = L.value(platform_id, "title.max_utf16_units") is not None
-    title_key = "title.max_utf16_units" if by_utf16 else "title.max_chars"
+    by_weight = L.value(platform_id, "title.max_weighted") is not None
+    title_key = ("title.max_weighted" if by_weight else "title.max_utf16_units" if by_utf16 else "title.max_chars")
     max_title = L.value(platform_id, title_key)
     if md.title is None or not md.title.strip():
         rows.append(_row("title", "WARN", md.title, max_title, platform_id, title_key,
                          "set --title (the platform names the video otherwise)"))
+    elif by_weight:
+        w = L.x_weighted_length(md.title)
+        over = w["value"] > max_title
+        status = "PASS" if not over else ("FAIL" if w["exact"] else "WARN")
+        fix = "" if not over else (f"shorten the text to {max_title} weighted characters (CJK and emoji count 2)"
+                                   if w["exact"] else "it has URLs or emoji, which X counts itself (a URL 23, an emoji "
+                                   f"sequence 2); this upper bound is over {max_title}: check it in X's composer or "
+                                   "shorten it")
+        rows.append(_row("title length", status, w["value"], max_title, platform_id, title_key, fix))
     else:
         n = len(md.title.encode("utf-16-le")) // 2 if by_utf16 else len(md.title)
         unit = "UTF-16 code units" if by_utf16 else "characters"

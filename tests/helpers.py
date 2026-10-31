@@ -1,10 +1,10 @@
 """Shared test helpers: paths, the CLI runner (stdout and stderr captured), an environment patcher, the fake keychain
-the offline test base class with its socket guard, and the loopback YouTube, Vimeo and TikTok mock fixtures. Nothing here is part of the
+the offline test base class with its socket guard, and the loopback YouTube, Vimeo, TikTok and X mock fixtures. Nothing here is part of the
 package.
 
 No test may contact the network (ADR-001, ADR-004). OfflineTestCase patches socket connect, create_connection and
 getaddrinfo for every test so that the only address a test can reach is 127.0.0.1 on the port of a mock server the
-test itself started (LOOPBACK_PORTS); anything else, Google, Vimeo and TikTok included, raises NetworkAttempted, a BaseException, so no
+test itself started (LOOPBACK_PORTS); anything else, Google, Vimeo, TikTok and X included, raises NetworkAttempted, a BaseException, so no
 `except Exception` in the package or the CLI can turn it into an error document: the test fails.
 
 No test may reach a real OS keychain (ADR-003). Importing this module replaces `keychain._import_keyring`, the
@@ -32,10 +32,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from publish_skill import cli  # noqa: E402
 from publish_skill import credentials as creds  # noqa: E402
 from publish_skill import keychain  # noqa: E402
-from publish_skill.platforms import tiktok, vimeo, youtube  # noqa: E402
+from publish_skill.platforms import tiktok, vimeo, x, youtube  # noqa: E402
 
 from mock_tiktok import MockTikTok  # noqa: E402
 from mock_vimeo import MockVimeo  # noqa: E402
+from mock_x import MockX  # noqa: E402
 from mock_youtube import MockYouTube  # noqa: E402
 
 FAKE_BACKEND_NAME = "fake keychain (tests)"
@@ -209,6 +210,23 @@ def tiktok_mock(test: unittest.TestCase, token: str, chunk_size: int = 256 * 102
               mock.patch.object(tiktok.TikTokUploader, "chunk_size", chunk_size),
               mock.patch.object(tiktok, "_sleep", test.waits.append),
               mock.patch.object(tiktok, "_rand", lambda: 0.5)):
+        p.start()
+        test.addCleanup(p.stop)
+    return m
+
+
+def x_mock(test: unittest.TestCase, token: str, chunk_size: int = 256 * 1024, **kw: Any) -> MockX:
+    """Start a MockX on 127.0.0.1 for this test and point the X uploader at it: its API base, a 256 KiB segment, and
+    backoff and status polling that record their waits (test.waits) instead of sleeping, with a fixed clock (1e9).
+    Stopped when the test ends."""
+    m = MockX(token, **kw).start(LOOPBACK_PORTS)
+    test.addCleanup(m.stop)
+    test.waits = []
+    for p in (mock.patch.object(x.XUploader, "api_base", m.url),
+              mock.patch.object(x.XUploader, "chunk_size", chunk_size),
+              mock.patch.object(x, "_sleep", test.waits.append),
+              mock.patch.object(x, "_rand", lambda: 0.5),
+              mock.patch.object(x, "_now", lambda: 1e9)):
         p.start()
         test.addCleanup(p.stop)
     return m

@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The X uploader (roadmap step 5, the third further platform).
+
+- ADR-007: `publish upload --platform x --confirm <token>` uploads the video with the X API v2 chunked media upload (`initialize` with `tweet_video`, `append` in 4 MiB multipart segments, `finalize`, the processing `STATUS`), then makes one post with `POST /2/tweets`. An OAuth 2.0 user access token (`PUBLISH_X_ACCESS_TOKEN`, environment or keychain) with `media.write`, `tweet.write`, `tweet.read` and `users.read`. Standard library only, in `platforms/x.py`, the fourth module with network code.
+- Exactly the bound request: the title as the post's text (a media-only post without one) and the media id, nothing added; every request goes to api.x.com only. X has no private or unlisted post, so `public` is the only privacy (`plan` FAILs the default `private`); a description, tags, a thumbnail, captions, or a file other than .mp4/.mov/.webm/.ts are refused before a token is printed.
+- An interrupted segment is sent again with the same `segment_index` with exponential backoff (`Retry-After`, or `x-rate-limit-reset` on a 429); finalize's `size` must equal the file's. The post is retried only after a 429: no answer or a 5xx is `UPLOAD_INTERRUPTED` with `retryable: false`, so a post is never made twice. 401 or a 403 naming a scope is `AUTH_FAILED`; failed processing and other 4xx are `UPLOAD_REJECTED`.
+- The X upload-limit table (cited, 2026-10-31; unknowns marked); `plan --platform x` reads ffmpeg-skill's `x` delivery spec and counts the text the way X does (twitter-text v3 weights, NFC; exact without URLs and emoji, else an upper bound that only WARNs).
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The TikTok uploader (roadmap step 5, the second further platform).
 
 - ADR-006: `publish upload --platform tiktok --confirm <token>` posts the video with the Content Posting API's Direct Post: creator info (the bound privacy level must be offered), `video/init` with `FILE_UPLOAD`, the chunked `PUT` (64 000 000-byte chunks, the last taking the trailing bytes, a small file whole; 206/201), then the post's status. A user access token (`PUBLISH_TIKTOK_ACCESS_TOKEN`, environment or keychain). Standard library only, in `platforms/tiktok.py`, the third module with network code.

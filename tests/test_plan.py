@@ -34,7 +34,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
 GIF = b"GIF89a" + b"\x00" * 32
 OFFICIAL = ("https://developers.google.com/youtube/", "https://support.google.com/youtube/", "https://developer.vimeo.com/",
-            "https://developers.tiktok.com/doc/")
+            "https://developers.tiktok.com/doc/", "https://docs.x.com/")
 
 # A minimal ffmpeg-skill contract with what the adapter needs (`export --list`, `check --platform ... --json
 # --no-loudness`, execution.network false). Tests edit a copy to make it unsupported.

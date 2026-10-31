@@ -29,8 +29,8 @@ SECRETS = {"PUBLISH_YOUTUBE_CLIENT_ID": "cid-7f3a91e2.apps.example",
            "PUBLISH_YOUTUBE_CLIENT_SECRET": "csecret-Zq81LmP0sW",
            "PUBLISH_YOUTUBE_REFRESH_TOKEN": "1//refresh-XyZ0987654321"}
 NO_SECRETS = {k: None for k in YT_VARS}
-# the only files with network code: one module per implemented uploader (ADR-004, ADR-005, ADR-006)
-NETWORK_MODULES = ("platforms/tiktok.py", "platforms/vimeo.py", "platforms/youtube.py")
+# the only files with network code: one module per implemented uploader (ADR-004, ADR-005, ADR-006, ADR-007)
+NETWORK_MODULES = ("platforms/tiktok.py", "platforms/vimeo.py", "platforms/x.py", "platforms/youtube.py")
 
 
 class NetworkGuardTests(OfflineTestCase):
@@ -38,7 +38,7 @@ class NetworkGuardTests(OfflineTestCase):
         with self.assertRaises(NetworkAttempted):
             socket.create_connection(("example.com", 443))
         for host in ("oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com", "files.tus.vimeo.com",
-                     "open.tiktokapis.com", "open-upload.tiktokapis.com"):
+                     "open.tiktokapis.com", "open-upload.tiktokapis.com", "api.x.com"):
             with self.assertRaises(NetworkAttempted):
                 socket.getaddrinfo(host, 443)
         with self.assertRaises(NetworkAttempted):                       # loopback, but not a mock this test started
@@ -99,14 +99,16 @@ class ContractTests(OfflineTestCase):
         self.assertTrue(c["execution"]["network_in_this_release"])
         self.assertEqual(c["execution"]["network_code"], ["src/publish_skill/platforms/tiktok.py",
                                                           "src/publish_skill/platforms/vimeo.py",
+                                                          "src/publish_skill/platforms/x.py",
                                                           "src/publish_skill/platforms/youtube.py"])
         hosts = c["execution"]["network_hosts"]
         self.assertEqual(hosts[:3], ["oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com"])
-        self.assertEqual(len(hosts), 6)
+        self.assertEqual(len(hosts), 7)
         self.assertTrue(hosts[3].startswith("*.vimeo.com"))
         self.assertEqual(hosts[4], "open.tiktokapis.com")
         self.assertTrue(hosts[5].startswith("*.tiktokapis.com"))
-        self.assertEqual(sorted(c["execution"]["upload_protocol"]), ["tiktok", "vimeo", "youtube"])
+        self.assertEqual(hosts[6], "api.x.com")
+        self.assertEqual(sorted(c["execution"]["upload_protocol"]), ["tiktok", "vimeo", "x", "youtube"])
         self.assertFalse(c["execution"]["shell"])
         tools = {t["tool_id"]: t for t in c["tools"]}
         self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload"})
@@ -121,7 +123,7 @@ class ContractTests(OfflineTestCase):
         self.assertEqual(c["errors"], {k: {"exit_code": e, "retryable": r} for k, (e, r) in ERROR_TABLE.items()})
         self.assertEqual(sorted(c["platforms"]["registered"]), platform_ids())
         self.assertEqual({pid: spec["implemented"] for pid, spec in c["platforms"]["registered"].items()},
-                         {"tiktok": True, "vimeo": True, "youtube": True})
+                         {"tiktok": True, "vimeo": True, "x": True, "youtube": True})
 
     def test_version_comes_from_pyproject(self):
         want = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
@@ -135,7 +137,7 @@ class ContractTests(OfflineTestCase):
 
     def test_no_shell_and_network_code_in_the_uploader_module_only(self):
         # ADR-004 narrows ADR-001's rule for exactly one file per implemented uploader: platforms/youtube.py and
-        # (ADR-005) platforms/vimeo.py and (ADR-006) platforms/tiktok.py may hold network code (http.client), and nothing else may. Only the ffmpeg-skill
+        # (ADR-005) platforms/vimeo.py and (ADR-006) platforms/tiktok.py and (ADR-007) platforms/x.py may hold network code (http.client), and nothing else may. Only the ffmpeg-skill
         # adapter may start a process (ADR-002). Every other banned word stays banned in all of them.
         src = ROOT / "src" / "publish_skill"
         network_words = ("import socket", "urllib.request", "http.client", "import requests", "urlopen", "httpx", "ssl",
@@ -167,7 +169,9 @@ class ContractTests(OfflineTestCase):
                    "platforms/youtube.py": {"__future__", "hashlib", "http", "json", "random", "re", "ssl", "time",
                                             "typing", "urllib"},
                    "platforms/vimeo.py": {"__future__", "hashlib", "http", "json", "random", "ssl", "time", "typing",
-                                          "urllib"}}
+                                          "urllib"},
+                   "platforms/x.py": {"__future__", "hashlib", "http", "json", "os", "random", "re", "ssl", "time",
+                                      "typing", "urllib"}}
         self.assertEqual(sorted(allowed), sorted(NETWORK_MODULES))
         for rel, want in allowed.items():
             tree = ast.parse((ROOT / "src" / "publish_skill" / rel).read_text(encoding="utf-8"))
@@ -203,7 +207,11 @@ class ContractTests(OfflineTestCase):
 
 class PlatformTests(OfflineTestCase):
     def test_registry(self):
-        self.assertEqual(platform_ids(), ["tiktok", "vimeo", "youtube"])
+        self.assertEqual(platform_ids(), ["tiktok", "vimeo", "x", "youtube"])
+        xx = get_platform("x")
+        self.assertEqual((xx.implemented, xx.roadmap_step, xx.credential_env, xx.ffmpeg_skill_platform),
+                         (True, 5, ("PUBLISH_X_ACCESS_TOKEN",), "x"))
+        self.assertEqual(xx.metadata_fields, ("title", "privacy"))
         tt = get_platform("tiktok")
         self.assertEqual((tt.implemented, tt.roadmap_step, tt.credential_env, tt.ffmpeg_skill_platform),
                          (True, 5, ("PUBLISH_TIKTOK_ACCESS_TOKEN",), "tiktok"))
