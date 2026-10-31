@@ -2,6 +2,13 @@
 
 ## 0.1.0 - unreleased
 
+The YouTube uploader (roadmap step 4).
+
+- ADR-004: `publish upload --confirm <token>` uploads the video, its thumbnail and its captions with the YouTube Data API v3 resumable upload protocol (OAuth refresh token -> access token, 8 MiB chunks, status query and resume after an interrupted chunk, exponential backoff on 5xx/429 and timeouts, a new session after a 404). Standard library only (`http.client`), in one module, the only one with network code.
+- Exactly the bound request is sent: the video resource is the bound title / description / tags / privacy (default `private`), and the last chunk is held back unless the bytes match the token. `--caption-language` (BCP-47, one per `--caption`) is new and bound by the token; `plan` checks it.
+- New typed errors: `AUTH_FAILED` (exit 3); `QUOTA_EXCEEDED`, `UPLOAD_LIMIT_EXCEEDED`, `UPLOAD_INTERRUPTED`, `UPLOAD_REJECTED`, `UPLOAD_PARTIAL` (exit 4). Receipts and errors pass through the redactor, which now also covers the access token and the session URIs.
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 Credentials in the OS keychain (roadmap step 3).
 
 - ADR-003: `publish auth status|login|logout`. Credentials come from the environment or the OS keychain (macOS Keychain, Windows Credential Manager, Secret Service), the environment first and per platform as a whole, so one platform's values never mix sources. `login` reads values from stdin or a prompt that does not echo, never from argv.

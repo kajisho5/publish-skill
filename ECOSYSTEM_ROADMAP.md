@@ -5,7 +5,7 @@ Written from a read-only audit of this repository on 2026-10-30. Each step below
 
 ## Where it stands
 
-Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). `publish plan` ([#5](https://github.com/kajisho5/publish-skill/pull/5), ADR-002): the deliverable and its metadata against YouTube's cited upload limits and ffmpeg-skill's `check`, offline; the token binds the metadata. Credentials ([#6](https://github.com/kajisho5/publish-skill/pull/6), ADR-003): the environment or the OS keychain (`publish auth login|status|logout`, keyring as an optional extra), never printed. No uploader is implemented; nothing is uploaded yet.
+Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). `publish plan` ([#5](https://github.com/kajisho5/publish-skill/pull/5), ADR-002): the deliverable and its metadata against YouTube's cited upload limits and ffmpeg-skill's `check`, offline; the token binds the metadata. Credentials ([#6](https://github.com/kajisho5/publish-skill/pull/6), ADR-003): the environment or the OS keychain (`publish auth login|status|logout`, keyring as an optional extra), never printed. YouTube uploader ([#7](https://github.com/kajisho5/publish-skill/pull/7), ADR-004): the Data API v3 resumable upload of the video, thumbnail and captions after the exact confirmation token, tested against a loopback mock only; no real upload has been made yet.
 
 ## What this repository owns
 
@@ -13,7 +13,7 @@ Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contr
 
 | Owned job | Status | Note |
 |---|---|---|
-| 配信先アップロード | missing |  |
+| 配信先アップロード | YouTube ([#7](https://github.com/kajisho5/publish-skill/pull/7)) | further platforms: step 5 |
 | アップロード制限 | YouTube ([#5](https://github.com/kajisho5/publish-skill/pull/5)) | upload-side limits only (file size, duration, rate limits, metadata fields); the platform delivery specs belong to ffmpeg-skill `_platforms.py` -- read them, do not copy them |
 
 ## Wiring
@@ -28,7 +28,7 @@ None, and the agent has no SkillSpec for publishing.
   - Done when: structured FAIL on an over-long title or wrong aspect, no network
 - [x] **3. Credentials** — `publish auth login|status|logout`, OS keychain, secrets redacted everywhere ([#6](https://github.com/kajisho5/publish-skill/pull/6))
   - Done when: no token in stdout/stderr/receipt
-- [ ] **4. YouTube uploader** — Data API v3 resumable (video, thumbnail, captions); dry-run default, `--confirm` required
+- [x] **4. YouTube uploader** — Data API v3 resumable (video, thumbnail, captions); dry-run default, `--confirm` required ([#7](https://github.com/kajisho5/publish-skill/pull/7))
   - Done when: mock-server tests incl. resume
 - [ ] **5. Further platforms** — one PR each
   - Done when: mock-server tests

@@ -22,6 +22,7 @@ _YT_INSERT = "https://developers.google.com/youtube/v3/docs/videos/insert"
 _YT_VIDEOS = "https://developers.google.com/youtube/v3/docs/videos"
 _YT_THUMBS = "https://developers.google.com/youtube/v3/docs/thumbnails/set"
 _YT_CAPTIONS = "https://developers.google.com/youtube/v3/docs/captions/insert"
+_YT_CAPTION_RESOURCE = "https://developers.google.com/youtube/v3/docs/captions"
 _YT_HELP_LENGTH = "https://support.google.com/youtube/answer/71673?hl=en"
 _YT_HELP_FORMATS = "https://support.google.com/youtube/troubleshooter/2888402?hl=en"
 _YT_HELP_CAPTIONS = "https://support.google.com/youtube/answer/2734698?hl=en"
@@ -116,6 +117,11 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "captions.plain_utf8_extensions": _known([".srt", ".sbv", ".sub"], "file extensions", _YT_HELP_CAPTIONS,
                                                  "Only basic versions of these files are supported. No style info (markup) is "
                                                  "recognized. The file must be in plain UTF-8."),
+        "captions.language": _known("BCP-47 language tag", "format", _YT_CAPTION_RESOURCE,
+                                    "snippet.language ... The property value is a BCP-47 language tag.",
+                                    required_by=_YT_CAPTIONS + " (snippet.language is a property you must specify)",
+                                    checked_as="present, and shaped like a BCP-47 tag (letters, digits and hyphens: "
+                                               "en, en-US, zh-Hant, es-419); the platform validates the registry"),
         # API quota: what one upload costs. Reported, not checked (plan cannot see the project's remaining quota).
         "quota.videos_insert": _known("100 calls per day; 1 unit each in the Video Uploads quota bucket", "quota", _YT_INSERT,
                                       "Quota impact: 100 calls per day. A call to this method has a quota cost of 1 unit in "

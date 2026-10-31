@@ -20,13 +20,13 @@ from . import adapter
 from . import limits as L
 from .doctor import locate_ffmpeg_skill
 from .errors import PublishError
-from .metadata import DEFAULT_METADATA, Metadata
+from .metadata import DEFAULT_METADATA, Metadata, image_kind
 from .platforms import get_platform
 
 PLAN_SCHEMA = f"{SKILL_ID}/plan@1"
 STATUSES = ("PASS", "WARN", "FAIL", "UNCHECKED")
-_JPEG = b"\xff\xd8\xff"
-_PNG = b"\x89PNG\r\n\x1a\n"
+# the shape of a BCP-47 tag (RFC 5646): a 2-3 letter (or 4-8 letter) language, then hyphenated 1-8 character subtags
+_BCP47 = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$|^[A-Za-z]{4,8}(?:-[A-Za-z0-9]{1,8})*$")
 
 
 def _row(check: str, status: str, value: Any, limit: Any, platform_id: str, key: Optional[str], fix: str = "",
@@ -115,9 +115,7 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
     if md.thumbnail:
         rows.append(_bytes_row("thumbnail size", md.thumbnail["size"], platform_id, "thumbnail.max_bytes",
                                "save the thumbnail smaller (JPEG at a lower quality)"))
-        with open(md.thumbnail["path"], "rb") as fh:
-            head = fh.read(8)
-        kind = "image/png" if head.startswith(_PNG) else "image/jpeg" if head.startswith(_JPEG) else "other"
+        kind = image_kind(md.thumbnail["path"])
         types = L.value(platform_id, "thumbnail.types")
         ok = types is None or kind in types
         rows.append(_row("thumbnail type", "PASS" if ok else "FAIL", kind, types, platform_id, "thumbnail.types",
@@ -130,6 +128,12 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
         ok = exts is None or ext in exts
         rows.append(_row(f"captions format ({name})", "PASS" if ok else "WARN", ext or "(no extension)", exts, platform_id,
                          "captions.extensions", "" if ok else "convert to SubRip (.srt): subtitle-skill"))
+        lang = c.get("language")
+        ok = bool(lang) and bool(_BCP47.match(str(lang)))
+        if L.value(platform_id, "captions.language") is not None:
+            rows.append(_row(f"captions language ({name})", "PASS" if ok else "FAIL", lang,
+                             L.value(platform_id, "captions.language"), platform_id, "captions.language",
+                             "" if ok else "give its BCP-47 language tag: --caption-language en (one per --caption, in order)"))
         if ext in (L.value(platform_id, "captions.plain_utf8_extensions") or []):
             with open(c["path"], "rb") as fh:
                 raw = fh.read()

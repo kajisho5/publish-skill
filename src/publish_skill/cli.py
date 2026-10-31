@@ -19,10 +19,12 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
   publish upload FILE --platform ID [METADATA] --json
                                                    dry run: what would be uploaded, and the confirmation token
   publish upload FILE --platform ID [METADATA] --confirm TOKEN --json
-                                                   the upload itself (every uploader is a stub in this release)
+                                                   the upload itself, after QC and a human's approval (YouTube:
+                                                   resumable upload; prints a receipt)
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
-            [--thumbnail IMAGE] [--caption FILE ...]   (the same flags on plan and upload; the token binds them)"""
+            [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
+            (the same flags on plan and upload; the token binds them)"""
 from __future__ import annotations
 
 import argparse
@@ -51,11 +53,14 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--privacy", help=f"private | unlisted | public (default: {DEFAULT_PRIVACY})")
     g.add_argument("--thumbnail", metavar="IMAGE")
     g.add_argument("--caption", action="append", dest="captions", metavar="FILE", help="a captions file (repeat for more)")
+    g.add_argument("--caption-language", action="append", dest="caption_languages", metavar="LANG",
+                   help="the BCP-47 language of each --caption, in the same order (e.g. en, ja, es-419)")
 
 
 def _metadata(args: argparse.Namespace):
     return build(title=args.title, description=args.description, description_file=args.description_file, tags=args.tags,
-                 privacy=args.privacy, thumbnail=args.thumbnail, captions=args.captions)
+                 privacy=args.privacy, thumbnail=args.thumbnail, captions=args.captions,
+                 caption_languages=args.caption_languages)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,6 +135,15 @@ def _human(doc: Dict[str, Any]) -> None:
             vars_ = ", ".join(f"{n}={s}" for n, s in p["credentials"]["variables"].items())
             print(f"  platform {pid:10} implemented={p['implemented']} ready={p['ready']}  {vars_}")
         for w in doc["warnings"] + doc["problems"]:
+            print(f"  - {w}")
+    elif doc.get("uploaded") and "result" in doc:
+        r = doc["result"]
+        print(f"uploaded {doc['input']['path']} to {doc['platform']['name']}: video {r['video_id']} (privacy {r['privacy']}) {r['url']}")
+        if r.get("thumbnail"):
+            print("  thumbnail set")
+        for c in r.get("captions") or []:
+            print(f"  captions {c['language']} added")
+        for w in r.get("warnings") or []:
             print(f"  - {w}")
     elif "dry_run" in doc:
         print(f"dry run: would upload {doc['input']['path']} ({doc['input']['size']} bytes) to {doc['platform']['name']}; nothing sent")

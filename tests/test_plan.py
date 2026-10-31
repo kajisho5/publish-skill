@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from helpers import FFMPEG_SKILL_DIR, ROOT, OfflineTestCase, env, run_cli, run_cli_raw
+from helpers import FFMPEG_SKILL_DIR, ROOT, OfflineTestCase, env, run_cli, run_cli_raw, youtube_mock
 
 from publish_skill import adapter
 from publish_skill import limits as L
@@ -161,10 +161,12 @@ class MetadataTokenTests(OfflineTestCase):
     def test_every_metadata_field_changes_the_token(self):
         thumb, thumb2 = self._file("t.png", PNG), self._file("t2.png", PNG + b"x")
         cap, cap2 = self._file("a.srt", b"1\n00:00:00,000 --> 00:00:01,000\nhi\n"), self._file("b.srt", b"x")
-        base = dict(title="T", description="D", tags=["a", "b"], privacy="unlisted", thumbnail=thumb, captions=[cap, cap2])
+        base = dict(title="T", description="D", tags=["a", "b"], privacy="unlisted", thumbnail=thumb, captions=[cap, cap2],
+                    caption_languages=["en", "ja"])
         t0 = confirm_token("youtube", "a" * 64, 10, build(**base))
         for field, other in (("title", "T2"), ("description", "D2"), ("tags", ["b", "a"]), ("privacy", "public"),
-                             ("thumbnail", thumb2), ("captions", [cap2, cap])):
+                             ("thumbnail", thumb2), ("captions", [cap2, cap]), ("caption_languages", ["ja", "en"]),
+                             ("caption_languages", ["en", "en-GB"])):
             self.assertNotEqual(t0, confirm_token("youtube", "a" * 64, 10, build(**dict(base, **{field: other}))), field)
         self.assertEqual(t0, confirm_token("youtube", "a" * 64, 10, build(**base)))
         moved = shutil.copy(thumb, os.path.join(self.tmp, "renamed.png"))      # bound by bytes, not path
@@ -180,9 +182,12 @@ class MetadataTokenTests(OfflineTestCase):
             self.assertEqual((rc, doc["error"]["code"]), (2, "CONFIRM_MISMATCH"))
             rc, doc = run_cli("upload", self.video, "--platform", "youtube", "--confirm", dry["confirm_token"], "--json")
             self.assertEqual((rc, doc["error"]["code"]), (2, "CONFIRM_MISMATCH"))     # dropping the title is an edit too
+            m = youtube_mock(self, SECRETS)
             rc, doc = run_cli("upload", self.video, "--platform", "youtube", "--title", "First", "--confirm",
                               dry["confirm_token"], "--json")
-        self.assertEqual((rc, doc["error"]["code"]), (5, "NOT_IMPLEMENTED"))          # the same metadata goes through
+        self.assertEqual((rc, doc["uploaded"]), (0, True))                              # the same metadata goes through
+        self.assertEqual(m.videos[doc["result"]["video_id"]]["resource"],
+                         {"snippet": {"title": "First"}, "status": {"privacyStatus": "private"}})
 
     def test_upload_refuses_metadata_that_breaks_a_limit(self):
         for argv in (("--title", "x" * 101), ("--privacy", "secret"), ("--title", "a <b>")):
@@ -205,6 +210,14 @@ class MetadataTokenTests(OfflineTestCase):
         with self.assertRaises(PublishError) as e:
             build(description_file=latin1)
         self.assertEqual(e.exception.code, "INVALID_ARGUMENT")
+        cap = self._file("c.srt", b"1\n")
+        with self.assertRaises(PublishError) as e:                     # one language per caption file, in order
+            build(captions=[cap], caption_languages=["en", "ja"])
+        self.assertEqual(e.exception.code, "INVALID_ARGUMENT")
+        with self.assertRaises(PublishError) as e:
+            build(caption_languages=["en"])
+        self.assertEqual(e.exception.code, "INVALID_ARGUMENT")
+        self.assertEqual(build(captions=[cap], caption_languages=["en"]).captions[0]["language"], "en")
         utf8 = self._file("d8.txt", "caf\xe9 動画".encode("utf-8"))
         self.assertEqual(build(description_file=utf8).description, "caf\xe9 動画")
 
@@ -262,6 +275,20 @@ class MetadataRowTests(OfflineTestCase):
         self.assertEqual(rows_by(rows, "captions encoding (fr.srt)")[0]["status"], "FAIL")
         self.assertEqual(rows_by(rows, "captions format (x.weird)")[0]["status"], "WARN")
         self.assertEqual(rows_by(rows, "captions size (en.srt)")[0]["status"], "PASS")
+        self.assertEqual(rows_by(rows, "captions language (en.srt)")[0]["status"], "FAIL")   # captions.insert needs one
+
+    def test_captions_language(self):
+        srt = self._file("en.srt", b"1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+        for lang, want in (("en", "PASS"), ("en-US", "PASS"), ("zh-Hant", "PASS"), ("es-419", "PASS"), ("ja", "PASS"),
+                           ("", "FAIL"), ("english language", "FAIL"), ("e", "FAIL"), ("en_US", "FAIL"), ("-en", "FAIL")):
+            md = build(captions=[srt], caption_languages=[lang])
+            row = rows_by(metadata_checks("youtube", md), "captions language (en.srt)")[0]
+            self.assertEqual(row["status"], want, lang)
+            self.assertEqual(row["source"], "https://developers.google.com/youtube/v3/docs/captions")
+        rc, doc = run_cli("upload", self.video, "--platform", "youtube", "--caption", srt, "--json")
+        self.assertEqual((rc, doc["error"]["code"]), (2, "METADATA_INVALID"))      # no token for captions without a language
+        rc, doc = run_cli("upload", self.video, "--platform", "youtube", "--caption", srt, "--caption-language", "en", "--json")
+        self.assertEqual((rc, doc["metadata"]["captions"][0]["language"]), (0, "en"))
 
     def test_duration_rows(self):
         self.assertEqual([r["status"] for r in duration_checks("youtube", 60.0)], ["PASS"])
