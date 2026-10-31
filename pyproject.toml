@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "publish-skill"
+version = "0.1.0"
+description = "Upload finished deliverables to delivery platforms, after QC: dry run by default, an explicit confirmation token for every upload, credentials from the environment only."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [{name = "kajisho5"}]
+keywords = ["publish", "upload", "youtube", "delivery", "agent-skill", "video-production"]
+dependencies = []
+
+[project.scripts]
+publish = "publish_skill.cli:main"
+
+[project.urls]
+Repository = "https://github.com/kajisho5/publish-skill"
+
+[tool.setuptools.packages.find]
+where = ["src"]
