@@ -4,8 +4,8 @@ Without --confirm it is a dry run: it reads the deliverable (size, sha256), repo
 which metadata, and the confirmation token, and opens no connection. The token is derived from the platform, the
 deliverable's bytes and the metadata (title, description, tags, privacy, and the thumbnail's and captions' bytes), so a
 confirmation given after one dry run cannot upload a different file, the same file to another platform, or the same
-file with edited metadata. Only the exact token goes through; then the credentials are read from the environment and
-the platform's uploader runs. Every uploader in this release is a stub that raises NOT_IMPLEMENTED, so nothing is ever
+file with edited metadata. Only the exact token goes through; then the credentials are read, from the environment or
+the OS keychain (ADR-003), and the platform's uploader runs. Every uploader in this release is a stub that raises NOT_IMPLEMENTED, so nothing is ever
 uploaded yet.
 
 Metadata that breaks one of the platform's upload limits (limits.py) is refused as METADATA_INVALID before a token is
@@ -65,7 +65,7 @@ def upload(path: str, platform_id: str, confirm: Optional[str] = None, metadata:
         raise PublishError("CONFIRM_MISMATCH", "the --confirm token does not match this deliverable, metadata and platform; "
                            "run without --confirm to see the current token. Nothing was uploaded",
                            {"platform": platform_id, "path": item["path"], "uploaded": False})
-    secrets = creds.load(platform_id)                        # CREDENTIALS_MISSING names the variables, never values
+    secrets = creds.load(platform_id)                        # the first credential read; CREDENTIALS_MISSING names variables
     request = UploadRequest(platform=platform_id, path=item["path"], size=item["size"], sha256=item["sha256"],
                             metadata=md.to_dict())
     result = uploader.upload(request, secrets)               # NOT_IMPLEMENTED for every platform in this release

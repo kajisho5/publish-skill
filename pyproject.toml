@@ -5,13 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "publish-skill"
 version = "0.1.0"
-description = "Upload finished deliverables to delivery platforms, after QC: dry run by default, an explicit confirmation token for every upload, credentials from the environment only."
+description = "Upload finished deliverables to delivery platforms, after QC: dry run by default, an explicit confirmation token for every upload, credentials from the environment or the OS keychain."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [{name = "kajisho5"}]
 keywords = ["publish", "upload", "youtube", "delivery", "agent-skill", "video-production"]
 dependencies = []
+
+[project.optional-dependencies]
+# The OS keychain (ADR-003): keyring is MIT-licensed; its dependencies are MIT, BSD-3-Clause or Apache-2.0.
+keychain = ["keyring>=25.0"]
 
 [project.scripts]
 publish = "publish_skill.cli:main"

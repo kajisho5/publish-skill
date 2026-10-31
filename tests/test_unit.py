@@ -82,8 +82,9 @@ class ContractTests(OfflineTestCase):
         self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload"})
         self.assertEqual(c["confirmation"]["required_for"], ["publish/upload"])
         self.assertFalse(c["confirmation"]["from_environment_or_config"])
-        self.assertEqual(c["credentials"]["source"], "environment")
+        self.assertEqual(c["credentials"]["sources"], ["environment", "keychain"])     # ADR-003
         self.assertFalse(c["credentials"]["printed"])
+        self.assertFalse(c["credentials"]["from_files_or_flags"])
 
     def test_errors_and_platforms_mirror_the_code(self):
         c = contract()
@@ -161,7 +162,11 @@ class CredentialTests(OfflineTestCase):
     def test_status_reports_presence_only(self):
         with env(**SECRETS):
             st = creds.status("youtube")
-        self.assertEqual(st, {"source": "environment", "variables": {v: "present" for v in YT_VARS}, "complete": True})
+        self.assertEqual({k: st[k] for k in ("source", "variables", "complete", "environment")},
+                         {"source": "environment", "variables": {v: "present" for v in YT_VARS}, "complete": True,
+                          "environment": {v: "present" for v in YT_VARS}})
+        self.assertEqual(st["keychain"]["variables"], {v: "absent" for v in YT_VARS})   # the fake keychain is empty
+        self.assertNotIn(SECRETS["PUBLISH_YOUTUBE_CLIENT_SECRET"], json.dumps(st))
         with env(**dict(NO_SECRETS, PUBLISH_YOUTUBE_CLIENT_ID="x", PUBLISH_YOUTUBE_CLIENT_SECRET="   ")):
             st = creds.status("youtube")
         self.assertEqual(st["variables"]["PUBLISH_YOUTUBE_CLIENT_SECRET"], "absent")    # blank counts as absent

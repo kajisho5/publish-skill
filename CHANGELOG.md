@@ -2,6 +2,13 @@
 
 ## 0.1.0 - unreleased
 
+Credentials in the OS keychain (roadmap step 3).
+
+- ADR-003: `publish auth status|login|logout`. Credentials come from the environment or the OS keychain (macOS Keychain, Windows Credential Manager, Secret Service), the environment first and per platform as a whole, so one platform's values never mix sources. `login` reads values from stdin or a prompt that does not echo, never from argv.
+- The keychain is reached through `keyring>=25.0` (MIT), an optional extra: `pip install 'publish-skill[keychain]'`. Without it, credentials come from the environment only and `doctor` says so. Only the three OS keychains are used; `PUBLISH_KEYCHAIN=off` turns it off.
+- Reports still say present / absent only; the redactor also covers every keychain value the process holds; every refusal still comes before any credential is read. New errors `KEYCHAIN_UNAVAILABLE` and `KEYCHAIN_ERROR` (exit 3).
+- Tests run against an in-memory fake keychain, with the real one guarded off; CI checks that the fake is what runs, and installs the extra on Python 3.12.
+
 `publish plan` (roadmap step 2).
 
 - ADR-002: `publish plan FILE --platform ID` checks the deliverable and its title / description / tags / privacy / thumbnail / captions against the platform's upload limits, offline, with a PASS / WARN / FAIL / UNCHECKED row per limit and a fix for each; verdict PASS / WARN / FAIL / INCOMPLETE, exit 1 unless PASS or WARN.

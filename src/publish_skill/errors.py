@@ -13,7 +13,9 @@ ERROR_TABLE: Dict[str, Tuple[int, bool]] = {
     "UNKNOWN_PLATFORM": (2, False),       # the platform id is not in the registry
     "CONFIRM_MISMATCH": (2, False),       # --confirm was given, but not the token the dry run printed for this deliverable
     "METADATA_INVALID": (2, False),       # the title / description / tags / privacy / thumbnail / captions break an upload limit
-    "CREDENTIALS_MISSING": (3, False),    # an environment variable the platform needs is unset or empty
+    "CREDENTIALS_MISSING": (3, False),    # a credential the platform needs is in neither the environment nor the keychain
+    "KEYCHAIN_UNAVAILABLE": (3, False),   # `auth login/logout`: no usable OS keychain (keyring not installed, none viable, or off)
+    "KEYCHAIN_ERROR": (3, False),         # the OS keychain refused to read, store or remove an item (e.g. locked)
     "NOT_IMPLEMENTED": (5, False),        # declared in the contract, not implemented yet (see the roadmap step)
     "CANCELLED": (6, True),               # interrupted by a signal
     "INTERNAL_ERROR": (7, False),         # a bug in this skill

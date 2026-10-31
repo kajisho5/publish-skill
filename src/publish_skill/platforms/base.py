@@ -23,7 +23,8 @@ class Uploader:
     name = ""
     roadmap_step = 0
     implemented = False
-    # environment variables this platform's credentials are read from (ADR-001: environment only until step 3)
+    # this platform's credential variables: read from the environment, or from the OS keychain under the same names
+    # (ADR-001, ADR-003)
     credential_env: Tuple[str, ...] = ()
     docs_url = ""
     # the `check --platform` name of ffmpeg-skill's delivery spec for this platform (ffmpeg-skill owns that spec)

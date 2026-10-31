@@ -10,7 +10,7 @@ class YouTubeUploader(Uploader):
     name = "YouTube"
     roadmap_step = 4
     implemented = False
-    # OAuth 2.0 installed-app credentials. Step 3 moves them to the OS keychain (`publish auth login`).
+    # OAuth 2.0 installed-app credentials, from the environment or the OS keychain (`publish auth login`, ADR-003).
     credential_env = ("PUBLISH_YOUTUBE_CLIENT_ID", "PUBLISH_YOUTUBE_CLIENT_SECRET", "PUBLISH_YOUTUBE_REFRESH_TOKEN")
     docs_url = "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol"
     ffmpeg_skill_platform = "youtube"

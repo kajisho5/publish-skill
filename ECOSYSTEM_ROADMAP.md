@@ -5,7 +5,7 @@ Written from a read-only audit of this repository on 2026-10-30. Each step below
 
 ## Where it stands
 
-Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). `publish plan` ([#5](https://github.com/kajisho5/publish-skill/pull/5), ADR-002): the deliverable and its metadata against YouTube's cited upload limits and ffmpeg-skill's `check`, offline; the token binds the metadata. No uploader is implemented; nothing is uploaded yet.
+Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). `publish plan` ([#5](https://github.com/kajisho5/publish-skill/pull/5), ADR-002): the deliverable and its metadata against YouTube's cited upload limits and ffmpeg-skill's `check`, offline; the token binds the metadata. Credentials ([#6](https://github.com/kajisho5/publish-skill/pull/6), ADR-003): the environment or the OS keychain (`publish auth login|status|logout`, keyring as an optional extra), never printed. No uploader is implemented; nothing is uploaded yet.
 
 ## What this repository owns
 
@@ -26,7 +26,7 @@ None, and the agent has no SkillSpec for publishing.
   - Done when: contract validates against the OS schema
 - [x] **2. `publish plan` (offline)** — validate deliverable + title/description/tags/privacy/thumbnail/captions against platform limits; encode spec from ffmpeg-skill export --list / check ([#5](https://github.com/kajisho5/publish-skill/pull/5))
   - Done when: structured FAIL on an over-long title or wrong aspect, no network
-- [ ] **3. Credentials** — `publish auth login|status|logout`, OS keychain, secrets redacted everywhere
+- [x] **3. Credentials** — `publish auth login|status|logout`, OS keychain, secrets redacted everywhere ([#6](https://github.com/kajisho5/publish-skill/pull/6))
   - Done when: no token in stdout/stderr/receipt
 - [ ] **4. YouTube uploader** — Data API v3 resumable (video, thumbnail, captions); dry-run default, `--confirm` required
   - Done when: mock-server tests incl. resume
