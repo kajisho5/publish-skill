@@ -33,7 +33,7 @@ jobs:
         run: |
           if [ "${{ matrix.extra }}" = keychain ]; then python -m pip install -e ".[keychain]" pyflakes; else python -m pip install -e . pyflakes; fi
       - run: python -m pyflakes src tests
-      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mocks (ADR-004, ADR-005, ADR-006, ADR-007)
+      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mocks (ADR-004, ADR-005, ADR-006, ADR-007, ADR-008)
         shell: bash
         run: |
           set -o pipefail
@@ -50,8 +50,12 @@ jobs:
           grep -E "^test_tiktok_resume_after_an_interrupted_chunk .* \.\.\. ok" test.log
           grep -E "^test_tiktok_daily_post_cap_is_typed_and_not_retried .* \.\.\. ok" test.log
           grep -E "^test_the_guard_blocks_every_non_loopback_host_for_x .* \.\.\. ok" test.log
+          grep -E "^test_the_guard_blocks_every_non_loopback_host_for_linkedin .* \.\.\. ok" test.log
           grep -E "^test_x_resume_after_an_interrupted_segment .* \.\.\. ok" test.log
           grep -E "^test_x_post_is_never_sent_twice .* \.\.\. ok" test.log
+          grep -E "^test_the_guard_blocks_every_non_loopback_host_for_linkedin .* \.\.\. ok" test.log
+          grep -E "^test_linkedin_resume_after_an_interrupted_part .* \.\.\. ok" test.log
+          grep -E "^test_linkedin_post_is_never_sent_twice .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no credentials, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash
@@ -59,8 +63,8 @@ jobs:
           # with the extra installed, the command-line steps never read the runner's real keychain
           PUBLISH_KEYCHAIN: ${{ matrix.extra == 'keychain' && 'off' || '' }}
         run: publish doctor --json --ffmpeg-skill "$RUNNER_TEMP/none" | tee doctor.json
-      - name: doctor reports youtube, vimeo, tiktok and x as implemented and, without credentials, not ready
-        run: python -c "import json; d=json.load(open('doctor.json')); p=d['checks']['platforms']; assert d['status']=='degraded' and all(p[k]['implemented'] and not p[k]['ready'] for k in ('youtube', 'vimeo', 'tiktok', 'x')), d"
+      - name: doctor reports youtube, vimeo, tiktok, x and linkedin as implemented and, without credentials, not ready
+        run: python -c "import json; d=json.load(open('doctor.json')); p=d['checks']['platforms']; assert d['status']=='degraded' and all(p[k]['implemented'] and not p[k]['ready'] for k in ('youtube', 'vimeo', 'tiktok', 'x', 'linkedin')), d"
       - name: doctor reports the keychain fallback (env only; without the extra, because keyring is not installed)
         shell: bash
         run: |
@@ -79,6 +83,8 @@ jobs:
           python -c "import json; d=json.load(open('dry-tiktok.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
           publish upload short.mp4 --platform x --privacy public --json | tee dry-x.json
           python -c "import json; d=json.load(open('dry-x.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
+          publish upload short.mp4 --platform linkedin --privacy public --json | tee dry-linkedin.json
+          python -c "import json; d=json.load(open('dry-linkedin.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
       - name: plan gives a structured FAIL on an over-long title, offline (no ffmpeg-skill here -> its rows UNCHECKED)
         shell: bash
         run: |
@@ -111,7 +117,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[keychain]" jsonschema
-      - name: All tests run, none skipped, the fake keychain is what runs (ADR-003), uploads reach only the loopback mocks (ADR-004, ADR-005, ADR-006, ADR-007)
+      - name: All tests run, none skipped, the fake keychain is what runs (ADR-003), uploads reach only the loopback mocks (ADR-004, ADR-005, ADR-006, ADR-007, ADR-008)
         env:
           AI_VIDEO_PRODUCTION_OS_DIR: ${{ github.workspace }}/vendor/AI-video-production-OS
           PUBLISH_FFMPEG_SKILL_DIR: ${{ github.workspace }}/vendor/ffmpeg-skill
@@ -124,3 +130,4 @@ jobs:
           grep -E "^test_the_guard_allows_only_the_mock_this_test_started .* \.\.\. ok" test.log
           grep -E "^test_the_guard_blocks_every_non_loopback_host_for_vimeo .* \.\.\. ok" test.log
           grep -E "^test_the_guard_blocks_every_non_loopback_host_for_x .* \.\.\. ok" test.log
+          grep -E "^test_the_guard_blocks_every_non_loopback_host_for_linkedin .* \.\.\. ok" test.log

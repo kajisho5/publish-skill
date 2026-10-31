@@ -51,12 +51,19 @@ def _bytes_row(check: str, size: int, platform_id: str, key: str, fix: str) -> D
 def file_checks(platform_id: str, path: str, size: int) -> List[Dict[str, Any]]:
     rows = [_bytes_row("file size", size, platform_id, "video.max_bytes",
                        "re-export smaller: ffmpeg-skill export (a lower quality or resolution)")]
+    least = L.value(platform_id, "video.min_bytes")                  # LinkedIn states a minimum too (ADR-008)
+    if least is not None:
+        ok = size >= least
+        rows.append(_row("file size (minimum)", "PASS" if ok else "FAIL", size, least, platform_id, "video.min_bytes",
+                         "" if ok else "the file is smaller than the platform accepts: re-export it at a higher "
+                                       "quality or longer"))
     formats = L.value(platform_id, "video.file_formats")
     if formats:
         ext = os.path.splitext(path)[1].lower()
         ok = ext in formats
         # WARN on YouTube (the bytes decide); FAIL where the table marks the list enforced (TikTok: the upload's
-        # Content-Type must name one of them, ADR-006; X: initialize's media_type, ADR-007)
+        # Content-Type must name one of them, ADR-006; X: initialize's media_type, ADR-007; LinkedIn: "File format: MP4.",
+        # ADR-008)
         bad = "FAIL" if L.limits_of(platform_id)["video.file_formats"].get("enforced") else "WARN"
         rows.append(_row("file format", "PASS" if ok else bad, ext or "(no extension)", formats, platform_id,
                          "video.file_formats", "" if ok else "re-export to .mp4: ffmpeg-skill export --preset <platform>"))
@@ -70,6 +77,10 @@ def duration_checks(platform_id: str, seconds: Optional[float], why_unchecked: s
                      why_unchecked or "ffmpeg-skill measures the duration; see the delivery spec row")]
     rows = [_row("duration", "PASS" if hard is None or seconds <= hard else "FAIL", seconds, hard, platform_id,
                  "video.max_duration_s", "" if hard is None or seconds <= hard else "shorten it: ffmpeg-skill cut")]
+    least = L.value(platform_id, "video.min_duration_s")             # LinkedIn: at least three seconds (ADR-008)
+    if least is not None:
+        rows.append(_row("duration (minimum)", "PASS" if seconds >= least else "FAIL", seconds, least, platform_id,
+                         "video.min_duration_s", "" if seconds >= least else f"make it at least {least} s long"))
     if soft is not None and seconds > soft and (hard is None or seconds <= hard):
         rows.append(_row("duration (unverified account)", "WARN", seconds, soft, platform_id, "video.unverified_max_duration_s",
                          "longer than an unverified account may upload: verify the account first"))

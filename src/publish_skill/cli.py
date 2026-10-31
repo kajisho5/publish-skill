@@ -20,8 +20,8 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
                                                    dry run: what would be uploaded, and the confirmation token
   publish upload FILE --platform ID [METADATA] --confirm TOKEN --json
                                                    the upload itself, after QC and a human's approval (YouTube,
-                                                   Vimeo, TikTok, X: resumable or chunked uploads; prints a
-                                                   receipt)
+                                                   Vimeo, TikTok, X, LinkedIn: resumable or chunked uploads;
+                                                   prints a receipt)
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
