@@ -14,23 +14,48 @@ jobs:
         # ubuntu-24.04, not -latest: Ubuntu 26.04 runners have no Python 3.9.
         os: [ubuntu-24.04, macos-latest, windows-latest]
         python: ["3.9", "3.12"]
+        # ADR-003: the OS keychain extra (keyring) on 3.12; 3.9 runs without it, the env-only fallback.
+        include:
+          - python: "3.9"
+            extra: ""
+          - python: "3.12"
+            extra: keychain
     runs-on: ${{ matrix.os }}
+    env:
+      PUBLISH_EXPECT_KEYRING: ${{ matrix.extra == 'keychain' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install -e . pyflakes
+      - name: install (with the keychain extra on 3.12)
+        shell: bash
+        run: |
+          if [ "${{ matrix.extra }}" = keychain ]; then python -m pip install -e ".[keychain]" pyflakes; else python -m pip install -e . pyflakes; fi
       - run: python -m pyflakes src tests
-      - run: python -m unittest discover -s tests -v
+      - name: unit tests; the fake keychain is what runs (ADR-003)
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee test.log
+          grep -E "^test_the_fake_keychain_is_what_runs .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no uploader implemented, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash
+        env:
+          # with the extra installed, the command-line steps never read the runner's real keychain
+          PUBLISH_KEYCHAIN: ${{ matrix.extra == 'keychain' && 'off' || '' }}
         run: publish doctor --json --ffmpeg-skill "$RUNNER_TEMP/none" | tee doctor.json
       - name: doctor reports youtube as not implemented and not ready
         run: python -c "import json; d=json.load(open('doctor.json')); y=d['checks']['platforms']['youtube']; assert d['status']=='degraded' and not y['implemented'] and not y['ready'], d"
+      - name: doctor reports the keychain fallback (env only; without the extra, because keyring is not installed)
+        shell: bash
+        run: |
+          python -c "import json, os; d=json.load(open('doctor.json')); k=d['checks']['keychain']; extra=os.environ['PUBLISH_EXPECT_KEYRING']=='1'; assert k['status']=='UNAVAILABLE' and k['fallback'], k; assert ('PUBLISH_KEYCHAIN' in k['reason']) if extra else ('not installed' in k['reason'] and k['install']), k; assert any('environment only' in w for w in d['warnings']), d['warnings']"
       - name: upload without --confirm is a dry run
         shell: bash
+        env:
+          PUBLISH_KEYCHAIN: ${{ matrix.extra == 'keychain' && 'off' || '' }}
         run: |
           publish upload README.md --platform youtube --json | tee dry.json
           python -c "import json; d=json.load(open('dry.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
@@ -65,12 +90,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -e . jsonschema
-      - name: All tests run, none skipped
+      - run: python -m pip install -e ".[keychain]" jsonschema
+      - name: All tests run, none skipped, and the fake keychain is what runs (ADR-003)
         env:
           AI_VIDEO_PRODUCTION_OS_DIR: ${{ github.workspace }}/vendor/AI-video-production-OS
           PUBLISH_FFMPEG_SKILL_DIR: ${{ github.workspace }}/vendor/ffmpeg-skill
+          PUBLISH_EXPECT_KEYRING: "1"
         run: |
           set -o pipefail
           python -m unittest discover -s tests -v 2>&1 | tee test.log
           ! grep -E "\.\.\. skipped" test.log
+          grep -E "^test_the_fake_keychain_is_what_runs .* \.\.\. ok" test.log

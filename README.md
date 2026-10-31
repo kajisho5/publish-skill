@@ -18,16 +18,20 @@
 
 Upload finished deliverables to delivery platforms (YouTube first) for the [AI Video Production OS](https://github.com/kajisho5/AI-video-production-OS) (department 納品 / Delivery), after QC and a human's confirmation. Platform delivery specs (codecs, resolution, loudness) belong to [ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill); this skill reads them and owns only the upload-side limits.
 
-**Status: 0.1.0, unreleased.** `contract`, `doctor`, `platforms`, `plan` and the dry run of `upload` work. **No uploader is implemented, so nothing is ever uploaded yet**; the YouTube uploader arrives in [roadmap](ECOSYSTEM_ROADMAP.md) step 4.
+**Status: 0.1.0, unreleased.** `contract`, `doctor`, `platforms`, `plan`, `auth` and the dry run of `upload` work. **No uploader is implemented, so nothing is ever uploaded yet**; the YouTube uploader arrives in [roadmap](ECOSYSTEM_ROADMAP.md) step 4.
 
 ```bash
 pip install -e .                                          # stdlib only, Python >= 3.9
-publish doctor                                            # platforms, credentials present/absent, ffmpeg-skill
+pip install -e '.[keychain]'                              # optional: the OS keychain (keyring>=25.0)
+publish doctor                                            # platforms, credentials present/absent, keychain, ffmpeg-skill
 publish plan final.mp4 --platform youtube --title "Launch" --privacy unlisted --thumbnail thumb.jpg --json
                                                           # offline: every limit, PASS/WARN/FAIL with a fix per row
 publish upload final.mp4 --platform youtube --title "Launch" --privacy unlisted --thumbnail thumb.jpg --json
                                                           # dry run: what would be sent, and the confirm_token
 publish upload final.mp4 --platform youtube --title "Launch" --privacy unlisted --thumbnail thumb.jpg --confirm <confirm_token> --json
+publish auth login --platform youtube                     # store credentials in the OS keychain (stdin or a hidden prompt)
+publish auth status --json                                # present/absent in the environment and the keychain
+publish auth logout --platform youtube                    # remove them from the keychain
 publish contract --json                                   # machine-readable contract (alias: skill --json)
 ```
 
@@ -37,8 +41,17 @@ Metadata flags, the same on `plan` and `upload`: `--title`, `--description` or `
 
 - **Dry run by default.** Without `--confirm`, `upload` reads the file and reports; it opens no connection.
 - **A confirmation token per deliverable.** The dry run prints `confirm_token`, derived from the platform, the file's sha256 and size, and the metadata (title, description, tags, privacy, and the thumbnail's and captions' bytes; [ADR-002](docs/decisions.md)). Only that exact token on the command line goes further, so an approval cannot be reused for a re-exported file, another platform or edited metadata. No environment variable or config file confirms for you. Metadata that breaks an upload limit is refused (`METADATA_INVALID`) before a token is printed.
-- **Credentials from the environment only**, never from files or flags, and never printed: reports say `present` / `absent`, and every output passes through a redactor. YouTube reads `PUBLISH_YOUTUBE_CLIENT_ID`, `PUBLISH_YOUTUBE_CLIENT_SECRET` and `PUBLISH_YOUTUBE_REFRESH_TOKEN`. The OS keychain arrives in step 3.
+- **Credentials from the environment or the OS keychain** ([ADR-003](docs/decisions.md)), never from files or flags, and never printed: reports say `present` / `absent`, and every output passes through a redactor. YouTube reads `PUBLISH_YOUTUBE_CLIENT_ID`, `PUBLISH_YOUTUBE_CLIENT_SECRET` and `PUBLISH_YOUTUBE_REFRESH_TOKEN`. See below.
 - **Uploaders are stubs** that return `NOT_IMPLEMENTED` (exit 5); the package contains no network code yet. The only process it starts is ffmpeg-skill (below), from an argv list, never a shell.
+
+## Credentials ([ADR-003](docs/decisions.md))
+
+- **Two sources, the environment first.** If any of a platform's variables is set in the environment, the environment is that platform's only source and the keychain is not consulted; otherwise the OS keychain is. One platform's values never mix sources (a refresh token belongs to the OAuth client that issued it).
+- **The OS keychain** is the macOS Keychain, the Windows Credential Manager or the Secret Service on Linux, reached through [keyring](https://pypi.org/project/keyring/) (MIT), an optional extra: `pip install 'publish-skill[keychain]'` installs `keyring>=25.0`. Without it, credentials come from the environment only and `doctor` says so. Only those three OS keychains are used: keyring's own backend choice (`PYTHON_KEYRING_BACKEND`, plug-in or file backends) is ignored. `PUBLISH_KEYCHAIN=off` turns the keychain off (headless machines, CI).
+- **Items** are stored under the service `publish-skill`, with the variable's name as the account.
+- **`publish auth login --platform youtube`** reads the values from stdin, one per line in the order of the platform's variables (or of `--variable NAME`, repeatable), or from a prompt that does not echo when stdin is a terminal. No flag takes a value, so none reaches shell history. Every value is read before the first is stored. `login` stores values you already have; it does not run Google's OAuth consent screen.
+- **`publish auth status`** reports, per platform, the chosen `source`, whether each variable is `present` / `absent` in the environment and in the keychain, and the keychain's availability. **`publish auth logout`** removes the items.
+- Refusals (unknown platform or variable, keychain unavailable, a wrong `--confirm`) all come before any credential is read. `KEYCHAIN_UNAVAILABLE` and `KEYCHAIN_ERROR` exit 3, like `CREDENTIALS_MISSING`.
 
 ## `publish plan` ([ADR-002](docs/decisions.md))
 
@@ -88,7 +101,7 @@ With `--json`, stdout holds exactly one JSON document. Failures are `{"ok": fals
 python -m unittest discover -s tests -v
 ```
 
-Every unit test runs with network access patched to fail; `plan`'s tests run fake ffmpeg-skill checkouts. The OS registry conformance checks and the JSON Schema validation of the contract run when `AI_VIDEO_PRODUCTION_OS_DIR` (or `../AI-video-production-OS`) is present and `jsonschema` is installed; the integration tests against a real ffmpeg-skill run when `PUBLISH_FFMPEG_SKILL_DIR` (or `../ffmpeg-skill`), FFmpeg and Python >= 3.10 are present. CI's `conformance` job provides all of them and fails if any test is skipped.
+Every unit test runs with network access patched to fail; `plan`'s tests run fake ffmpeg-skill checkouts. No test reaches a real OS keychain: the package's only import of keyring is replaced by a guard for the whole test run, every test gets an in-memory fake keychain, and CI fails unless `test_the_fake_keychain_is_what_runs` passed. The OS registry conformance checks and the JSON Schema validation of the contract run when `AI_VIDEO_PRODUCTION_OS_DIR` (or `../AI-video-production-OS`) is present and `jsonschema` is installed; the integration tests against a real ffmpeg-skill run when `PUBLISH_FFMPEG_SKILL_DIR` (or `../ffmpeg-skill`), FFmpeg and Python >= 3.10 are present. CI's `conformance` job provides all of them and fails if any test is skipped.
 
 ## Licence
 

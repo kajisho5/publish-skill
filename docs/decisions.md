@@ -110,3 +110,62 @@ Two repositories hold limits that apply to one upload. `ecosystem.json` gives th
 - Step 3: credentials in the OS keychain.
 - Step 4: the YouTube uploader sends exactly the metadata the token bound, and reports `uploadLimitExceeded` and quota errors as typed, retryable or not.
 - Step 5: each platform brings its limit table (cited, unknowns marked) and its `ffmpeg_skill_platform`.
+
+## ADR-003 Credentials in the OS keychain: `publish auth status|login|logout`, the environment first, `keyring` as an optional extra
+
+### Context
+
+Roadmap step 3 asks for `publish auth login|status|logout`, the OS keychain, and secrets redacted everywhere. It is done when no token appears in stdout, stderr or a receipt. ADR-001 read credentials from the environment only and left the keychain for this step. Its rules stay: values are never printed or logged, reports say `present` / `absent`, the redactor runs over every output, every refusal comes before any credential is read, and nothing uses the network.
+
+Python's standard library has no keychain API. Each OS has its own: the Security framework on macOS, the Credential Manager on Windows, and the Secret Service D-Bus API on Linux. The `keyring` library wraps all three, so the choice was between that library and three hand-written bindings.
+
+### Decision
+
+- **The OS keychain through `keyring`, as an optional extra.**
+  - `pip install 'publish-skill[keychain]'` installs `keyring>=25.0`. The core install stays stdlib only (ADR-001), and `dependencies` stays empty.
+  - Licences: keyring is MIT. Its dependencies are MIT (jaraco.classes, jaraco.functools, jaraco.context, more-itertools, jeepney, backports.tarfile), BSD-3-Clause (SecretStorage, pywin32-ctypes) or Apache-2.0 (importlib_metadata, and cryptography, which is Apache-2.0 OR BSD-3-Clause). All were checked on PyPI on 2026-10-31.
+  - Minimum version: keyring 25.0 and 25.7.0 (the latest on 2026-10-31) were both installed and checked. Each has the three backend classes used here, their `viable` and `priority`, and `get_password` / `set_password` / `delete_password`. keyring 25.0 needs Python >= 3.8, so the extra works on every Python this package supports.
+  - Without keyring, the keychain is `UNAVAILABLE`, and credentials come from the environment only. `doctor` reports `checks.keychain` with the reason and the install command, and adds a warning, so the status is `degraded`. `auth login` and `auth logout` refuse with `KEYCHAIN_UNAVAILABLE` (exit 3).
+- **Only the three OS keychains.** `keychain.py` imports `keyring.backends.macOS`, `.Windows` and `.SecretService`. Of the viable ones, it uses the one with the highest priority.
+  - keyring's own backend choice is never consulted. That covers `keyring.get_keyring()`, `PYTHON_KEYRING_BACKEND`, `keyringrc.cfg`, and plug-in backends found through entry points. A plug-in could keep secrets in a plain file (ADR-001: never from files) or in a network store (no network).
+  - The Secret Service is local D-Bus IPC, not a network connection.
+  - If no OS keychain is usable (on Linux, for example, there is no D-Bus session or the keyring is locked), the keychain is `UNAVAILABLE` with the reason.
+  - `PUBLISH_KEYCHAIN=off` (or `0`, `false`, `no`) turns the keychain off. It is meant for headless machines and CI. It can only narrow the sources, never widen them.
+- **Where values live.** Each value is an item of the service `publish-skill`. Its account (user name) is the variable's name, for example `PUBLISH_YOUTUBE_REFRESH_TOKEN`. The names are the platform's `credential_env`, unchanged, so the environment and the keychain hold the same variables.
+- **Precedence: the environment first, per platform, as a whole.**
+  - If any of a platform's variables is set in the environment, the environment is that platform's only source, and the keychain is not consulted. Otherwise the keychain is the source.
+  - So one platform's values never mix sources. A refresh token belongs to the OAuth client that issued it. A client id from the environment paired with a refresh token from the keychain would fail at the platform, with an error that names neither.
+  - With a partial environment, `CREDENTIALS_MISSING` names the missing variables, gives `source: "environment"`, and says that the keychain is not consulted.
+  - The environment comes first because it is the explicit, per-process choice, and CI and agents set it. A value stored once in the keychain must not silently override it. This follows common practice, such as `GH_TOKEN` over gh's stored token.
+  - `status` (and so `doctor`, `platforms` and the dry run) reports, for each platform, the chosen `source`, `variables` and `complete` for that source, and the presence of each variable in `environment` and in `keychain`. It adds a `note` when the environment shadows values in the keychain. All values are `present` or `absent`, never a value or a length.
+- **`publish auth`.**
+  - `status [--platform ID]` reports the keychain's availability and each platform's credential status.
+  - `login --platform ID [--variable NAME ...]` stores values the user already has. It reads them from stdin, one per line, in the order of the platform's variables (or of `--variable`). When stdin is a terminal, it uses `getpass` instead: a prompt on stderr that does not echo.
+    - No flag or positional argument takes a value. A test checks the parser, and checks that `--value`, `--token`, `--password` and a positional are rejected. A value on the command line would reach shell history and process listings.
+    - Every value is read and checked (none may be empty or missing) before the first one is stored.
+    - A store failure gives `KEYCHAIN_ERROR` with the names already stored.
+    - If the environment shadows the stored values, the result says so.
+  - `logout --platform ID [--variable NAME ...]` removes items. It reports `removed` and `not_found` by name, and warns when the environment still sets a variable.
+  - `login` does not run Google's OAuth consent flow. That flow needs the network and a browser. Whether and how to add it is left to step 4.
+- **The safety rules, kept.**
+  - Never printed or logged. Nothing in the package logs. Keychain errors carry the backend's name, the operation, the variable's name and the exception's type, never the backend's message. The `Credentials` repr now also shows the source, and still no value.
+  - The redactor backstop stays, and it still covers every credential variable in the environment. It now also covers every value this process has read from the keychain or been given by `auth login`, which `credentials.hold` records.
+  - The redactor does not read the keychain itself. Reading on every output would read credentials before refusals and on commands that need none (`contract`, `plan`). A value this process never held cannot be in its output.
+  - Refusals come first. The upload gate is unchanged: platform → file → metadata → token → credentials (ADR-001, ADR-002). `auth` refuses an unknown platform, an unknown or repeated variable, and an unavailable keychain before it reads stdin or touches the keychain. Tests call each refusal with the environment read, the keychain backend and stdin all replaced by probes that fail on use. A control case shows that the probes fire once the gate is passed.
+  - No network. keychain.py and auth.py are under ADR-001's source rule (no socket, HTTP or process code). The socket guard on every test is unchanged.
+- **Errors.** `KEYCHAIN_UNAVAILABLE` and `KEYCHAIN_ERROR` are added, both exit 3 (the credentials class) and not retryable. `CREDENTIALS_MISSING` now means "in neither source".
+- **Tests never touch a real keychain.**
+  - `keychain._import_keyring` is the package's only import of keyring. A test walks every module's AST to check this, and that nothing calls `get_keyring`, `set_keyring`, `import_module` or `__import__`.
+  - `tests/helpers.py` replaces `_import_keyring`, for the whole test process, with a guard that raises `RealKeychainTouched`. That is a `BaseException`, so no `except Exception` in the package can swallow it.
+  - Every `OfflineTestCase` gets a fresh in-memory fake backend with keyring's three methods, so the real wrapper code runs against it. The test also unsets `PUBLISH_KEYCHAIN`.
+  - Backend selection is tested on stand-in classes, never the installed ones.
+  - `KeychainGuardTests.test_the_fake_keychain_is_what_runs` asserts that the fake is the active keychain, and that the guard is in place and raises. In jobs that install the extra (`PUBLISH_EXPECT_KEYRING=1`), it also asserts that the real keyring is installed there, and is still unreachable.
+  - CI fails if that test did not run and pass.
+- **CI.**
+  - `unit` installs the `keychain` extra on Python 3.12 and not on 3.9, on all three OSes. So both the env-only fallback and the extra are exercised everywhere. The `doctor` step asserts the fallback: without the extra, the keychain is `UNAVAILABLE` because keyring is not installed, and the warning says "environment only". With the extra, the job sets `PUBLISH_KEYCHAIN=off` for its command-line steps, so even they never read a runner's real keychain.
+  - `conformance` installs the extra, too. Nothing may skip there, as before.
+
+### Follow-ups
+
+- Step 4: the uploader gets its credentials from `credentials.load` only. Every document it writes, including the upload receipt, goes through `redact`. Its tests repeat the no-value-in-output checks on the receipt. Step 4 also decides whether `auth login` should run the OAuth consent flow (network, browser) or keep storing a refresh token obtained elsewhere.
+- Step 5: each platform's variables become keychain items under the same names, with no new code.

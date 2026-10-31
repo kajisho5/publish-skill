@@ -1,10 +1,12 @@
 """`publish doctor`: what is ready, what is missing and how to get it. It never opens a network connection, never
-uploads, and reports credentials as `present` / `absent` only. When ffmpeg-skill is found, its capabilities are
-detected by running its contract and `export --list` locally (adapter.py; ffmpeg-skill declares no network use).
+uploads, and reports credentials as `present` / `absent` only, in the environment and in the OS keychain (ADR-003).
+When ffmpeg-skill is found, its capabilities are detected by running its contract and `export --list` locally
+(adapter.py; ffmpeg-skill declares no network use).
 
-status: ok (every platform implemented with complete credentials, ffmpeg-skill found and supported) | degraded (a
-platform not implemented or without credentials, or ffmpeg-skill not found or unsupported: the skill itself works,
-exit 0) | fail (Python too old, exit 1)."""
+status: ok (every platform implemented with complete credentials, the OS keychain usable, ffmpeg-skill found and
+supported) | degraded (a platform not implemented or without credentials, the keychain unavailable so credentials come
+from the environment only, or ffmpeg-skill not found or unsupported: the skill itself works, exit 0) | fail (Python too
+old, exit 1)."""
 from __future__ import annotations
 
 import os
@@ -15,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from . import SKILL_ID, __version__
 from . import credentials as creds
+from . import keychain
 from .adapter import detect
 from .platforms import get_platform, platform_ids
 
@@ -70,6 +73,7 @@ def doctor(ffmpeg_skill_dir: Optional[str] = None, offline: bool = False) -> Dic
         checks["ffmpeg_skill"]["capabilities"] = det
         if det["status"] != "OK":
             checks["ffmpeg_skill"]["status"] = "UNSUPPORTED"
+    checks["keychain"] = keychain.availability()
     plats = platforms_report()
     checks["platforms"] = plats
     checks["operations"] = {op: {"implemented": IMPLEMENTED_OPS[op], "roadmap_step": OP_STEP[op]} for op in IMPLEMENTED_OPS}
@@ -77,9 +81,16 @@ def doctor(ffmpeg_skill_dir: Optional[str] = None, offline: bool = False) -> Dic
     for pid, p in plats.items():
         if not p["implemented"]:
             warnings.append(f"platform {pid}: uploader not implemented yet (roadmap step {p['roadmap_step']})")
-        absent = sorted(n for n, s in p["credentials"]["variables"].items() if s != "present")
-        if absent:
-            warnings.append(f"platform {pid}: credentials absent from the environment: {', '.join(absent)}")
+        c = p["credentials"]
+        absent = sorted(n for n, s in c["variables"].items() if s != "present")
+        if absent and c["source"] is None:
+            warnings.append(f"platform {pid}: credentials absent from the environment and the keychain: {', '.join(absent)}")
+        elif absent:
+            warnings.append(f"platform {pid}: credentials incomplete in the {c['source']}: {', '.join(absent)} absent")
+    kc = checks["keychain"]
+    if kc["status"] != "OK":
+        warnings.append(f"keychain: unavailable ({kc['reason']}); credentials come from the environment only"
+                        + (f" (to use the OS keychain: {kc['install']})" if kc["install"] else ""))
     if checks["ffmpeg_skill"]["status"] == "MISSING":
         warnings.append("ffmpeg-skill: not found (`publish plan` reports its delivery spec rows as UNCHECKED)")
     elif checks["ffmpeg_skill"]["status"] != "OK":

@@ -6,7 +6,8 @@ from typing import Any, Dict
 
 from . import PACKAGE_NAME, SKILL_ID, __version__
 from . import adapter
-from .credentials import REDACTED, SOURCE
+from . import keychain
+from .credentials import PRECEDENCE, REDACTED, SOURCES
 from .doctor import DOCTOR_SCHEMA, FFMPEG_SKILL_ENV, IMPLEMENTED_OPS, OP_STEP
 from .errors import ERROR_TABLE
 from .limits import LIMITS
@@ -45,6 +46,12 @@ def tools() -> list:
          "deterministic": False, "implemented": True, "schema": DOCTOR_SCHEMA,
          "description": "Python, ffmpeg-skill, and per platform: uploader implemented, credentials present / absent (never values)",
          "argv": ["doctor", "[--offline]", "[--ffmpeg-skill <dir>]", "--json"]},
+        {"tool_id": f"{SKILL_ID}/auth", "role": "configuration", "network": False, "writes_media": False, "mutates_input": False,
+         "deterministic": False, "implemented": True, "roadmap_step": 3,
+         "description": "Credentials in the OS keychain: status (present / absent, never values), login (values from stdin "
+                        "or a hidden prompt, never from argv), logout",
+         "argv": ["auth", "status|login|logout", "[--platform <id>]", "[--variable <name> ...]", "--json"],
+         "secret_input": "stdin (one value per line) or a prompt that does not echo; no flag takes a value"},
         {"tool_id": f"{SKILL_ID}/platforms", "role": "diagnostic", "network": False, "writes_media": False, "mutates_input": False,
          "deterministic": False, "implemented": True, "description": "Registered platforms with status and credential variable names",
          "argv": ["platforms", "--json"]},
@@ -82,7 +89,9 @@ def contract() -> Dict[str, Any]:
                          "quality control of the deliverable (qc-skill; uploads come after QC)",
                          "deciding whether to publish (a human confirmation the agent records)",
                          "downloading media from a URL (ingest-skill)",
-                         "credentials from files, flags or request fields (environment only; OS keychain in step 3)",
+                         "credentials from files, flags or request fields (the environment or the OS keychain only)",
+                         "keyring backends other than the three OS keychains (plain files, plug-ins, network stores)",
+                         "obtaining an OAuth refresh token (the consent screen needs the network; `auth login` stores one)",
                          "uploading without --confirm"],
         "tools": tools(),
         "platforms": {"registered": {pid: get_platform(pid).spec() for pid in platform_ids()},
@@ -94,8 +103,15 @@ def contract() -> Dict[str, Any]:
                          "default": "dry run (no network, nothing uploaded)",
                          "from_environment_or_config": False,
                          "decision": "docs/decisions.md ADR-001"},
-        "credentials": {"source": SOURCE, "printed": False, "reported_as": ["present", "absent"], "redaction": REDACTED,
-                        "keychain": "roadmap step 3"},
+        "credentials": {"sources": list(SOURCES), "precedence": PRECEDENCE, "printed": False,
+                        "reported_as": ["present", "absent"], "redaction": REDACTED, "from_files_or_flags": False,
+                        "keychain": {"service": keychain.SERVICE, "account": "the environment variable's name",
+                                     "backends": list(keychain.BACKEND_LABELS), "optional_extra": keychain.EXTRA,
+                                     "requirement": keychain.REQUIREMENT, "install": keychain.INSTALL,
+                                     "without_it": "credentials come from the environment only; doctor says so",
+                                     "turn_off": f"{keychain.OFF_ENV}=off",
+                                     "write_input": "stdin or a prompt that does not echo, never argv"},
+                        "decision": "docs/decisions.md ADR-001, ADR-003"},
         "execution": {"canonical_invocation": ["publish", "<command>", "...", "--json"], "network": True,
                       "network_tools": [f"{SKILL_ID}/upload"], "network_requires": "--confirm <token>",
                       "network_in_this_release": False, "shell": False, "input_is_read_only": True,
