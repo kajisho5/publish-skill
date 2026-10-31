@@ -18,8 +18,9 @@ from .upload import TOKEN_BINDS, TOKEN_PREFIX
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
                   "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
                   "[--caption <file> ... --caption-language <bcp47> ...]"]
-# the only modules with network code: one per implemented uploader (ADR-004, ADR-005)
-NETWORK_MODULES = ["src/publish_skill/platforms/vimeo.py", "src/publish_skill/platforms/youtube.py"]
+# the only modules with network code: one per implemented uploader (ADR-004, ADR-005, ADR-006)
+NETWORK_MODULES = ["src/publish_skill/platforms/tiktok.py", "src/publish_skill/platforms/vimeo.py",
+                   "src/publish_skill/platforms/youtube.py"]
 
 CONTRACT_VERSION = "1.0"
 CAPABILITY_IDS = {"plan": "publish.plan", "upload": "publish.upload"}
@@ -34,7 +35,7 @@ _OP_TOOLS = {
     "upload": {"role": "execution", "network": True, "writes_media": False,
                "description": "Upload a deliverable, its thumbnail and captions to a platform (YouTube: the Data API v3 "
                               "resumable upload; Vimeo: the tus resumable upload, title, description and privacy "
-                              "only). Dry run unless --confirm carries the token the dry run printed for "
+                              "only; TikTok: the Content Posting API Direct Post, title and privacy only). Dry run unless --confirm carries the token the dry run printed for "
                               "exactly this file, metadata and platform; then a receipt, redacted",
                "argv": ["upload", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--confirm <token>]", "--json"]},
 }
@@ -101,7 +102,13 @@ def contract() -> Dict[str, Any]:
                          "resuming an upload in a later run (an interrupted run uploads nothing; run it again)",
                          "an HTTP(S) proxy for the upload (direct connections only in this release)",
                          "Vimeo: tags, thumbnails and text tracks (refused before a token is printed; add them on Vimeo)",
-                         "Vimeo: the OAuth authorization-code flow (`auth login` stores a personal access token)"],
+                         "Vimeo: the OAuth authorization-code flow (`auth login` stores a personal access token)",
+                         "TikTok: a description, tags, a cover image, captions, the unlisted privacy, the duet / stitch "
+                         "/ comment switches and the branded-content or AI-generated labels (refused or not sent; set "
+                         "them in the TikTok app)",
+                         "TikTok: the OAuth flow and refreshing the 24-hour access token (`auth login` stores an access "
+                         "token)",
+                         "TikTok: PULL_FROM_URL, photo posts and drafts sent to the creator's inbox (video.upload)"],
         "tools": tools(),
         "platforms": {"registered": {pid: get_platform(pid).spec() for pid in platform_ids()},
                       "per_platform_pr": "roadmap step 5"},
@@ -125,7 +132,9 @@ def contract() -> Dict[str, Any]:
                       "network_tools": [f"{SKILL_ID}/upload"], "network_requires": "--confirm <token>",
                       "network_in_this_release": True, "network_code": list(NETWORK_MODULES),
                       "network_hosts": ["oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com",
-                                        "*.vimeo.com (the tus upload link Vimeo returns; https only)"],
+                                        "*.vimeo.com (the tus upload link Vimeo returns; https only)",
+                                        "open.tiktokapis.com",
+                                        "*.tiktokapis.com (the upload_url TikTok returns; https only)"],
                       "upload_protocol": {"youtube": {
                           "oauth": "refresh token -> access token (https://oauth2.googleapis.com/token)",
                           "resumable": "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
@@ -143,7 +152,21 @@ def contract() -> Dict[str, Any]:
                           "retries": "5xx, 429, connection errors and timeouts on PATCH/HEAD: exponential backoff (or "
                                      "Retry-After), then HEAD and a resume from Upload-Offset; the create POST is retried "
                                      "only on 429/5xx answers",
-                          "decision": "docs/decisions.md ADR-005"}},
+                          "decision": "docs/decisions.md ADR-005"},
+                          "tiktok": {
+                          "auth": "user access token with the video.publish scope (Authorization: Bearer, to "
+                                  "open.tiktokapis.com only)",
+                          "resumable": "https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide",
+                          "methods": ["POST /v2/post/publish/creator_info/query/", "POST /v2/post/publish/video/init/ "
+                                      "(source FILE_UPLOAD)", "PUT upload_url (Content-Range)",
+                                      "POST /v2/post/publish/status/fetch/"],
+                          "chunk_bytes": "64 000 000 (the guide: 5-64 MB, the final chunk up to 128 MB); a file of at "
+                                         "most that size whole",
+                          "metadata_sent": ["title", "privacy_level"],
+                          "retries": "5xx, 429, connection errors and timeouts on a chunk: exponential backoff (or "
+                                     "Retry-After), then the same chunk again; 416: the post's uploaded_bytes and a "
+                                     "resume; the init POST is retried only on 429/5xx answers",
+                          "decision": "docs/decisions.md ADR-006"}},
                       "shell": False, "input_is_read_only": True,
                       "child_processes": "adapter.py only: [python, <ffmpeg-skill>/scripts/<tool>.py, ...] as an argv list "
                                     "(tools: _contract, export --list, check), never a shell; ffmpeg-skill declares no "

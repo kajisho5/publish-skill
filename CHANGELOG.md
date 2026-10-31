@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The TikTok uploader (roadmap step 5, the second further platform).
+
+- ADR-006: `publish upload --platform tiktok --confirm <token>` posts the video with the Content Posting API's Direct Post: creator info (the bound privacy level must be offered), `video/init` with `FILE_UPLOAD`, the chunked `PUT` (64 000 000-byte chunks, the last taking the trailing bytes, a small file whole; 206/201), then the post's status. A user access token (`PUBLISH_TIKTOK_ACCESS_TOKEN`, environment or keychain). Standard library only, in `platforms/tiktok.py`, the third module with network code.
+- Exactly the bound request: the title (TikTok's caption) and `privacy_level` (`private` -> `SELF_ONLY`, the default; `public` -> `PUBLIC_TO_EVERYONE`), nothing added; the token goes to open.tiktokapis.com only, and the upload URL must be https on a tiktokapis.com host and is redacted. A description, tags, a thumbnail, captions, `unlisted`, or a file other than .mp4/.mov/.webm are refused before a token is printed.
+- An interrupted chunk is sent again with exponential backoff; a lost answer (416) is resolved with the post's `uploaded_bytes`. `spam_risk_too_many_posts` is `UPLOAD_LIMIT_EXCEEDED`, `reached_active_user_cap` `QUOTA_EXCEEDED`, `access_token_invalid` / `scope_not_authorized` `AUTH_FAILED`, a `FAILED` post `UPLOAD_REJECTED` (or `UPLOAD_INTERRUPTED` for `internal`).
+- The TikTok upload-limit table (cited, 2026-10-31; unknowns marked); `plan --platform tiktok` reads ffmpeg-skill's `tiktok` delivery spec, counts the title in UTF-16 code units, and FAILs a container TikTok does not take.
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The Vimeo uploader (roadmap step 5, the first further platform).
 
 - ADR-005: `publish upload --platform vimeo --confirm <token>` uploads the video with the Vimeo API 3.4 resumable (tus 1.0.0) upload: `POST /me/videos` (approach tus) with a personal access token (`PUBLISH_VIMEO_ACCESS_TOKEN`, environment or keychain), then `PATCH` in 128 MiB chunks, with `HEAD` and a resume after an interrupted chunk or a 409, and exponential backoff on 5xx/429 and timeouts. Standard library only, in `platforms/vimeo.py`, the second (and only other) module with network code.

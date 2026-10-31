@@ -6,7 +6,8 @@ deliverable's bytes and the metadata (title, description, tags, privacy, and the
 confirmation given after one dry run cannot upload a different file, the same file to another platform, or the same
 file with edited metadata. Only the exact token goes through; then the credentials are read, from the environment or
 the OS keychain (ADR-003), and the platform's uploader runs with exactly the request the token bound (YouTube: the
-resumable upload in platforms/youtube.py, ADR-004; Vimeo: the tus upload in platforms/vimeo.py, ADR-005).
+resumable upload in platforms/youtube.py, ADR-004; Vimeo: the tus upload in platforms/vimeo.py, ADR-005; TikTok:
+the Direct Post chunked upload in platforms/tiktok.py, ADR-006).
 
 The receipt of an upload, and the error of a failed one, pass through credentials.redact here, before they reach the
 CLI (which redacts again): no credential, access token, session URI or upload link is in either.
@@ -25,7 +26,7 @@ from . import SKILL_ID, __version__
 from . import credentials as creds
 from .errors import PublishError
 from .metadata import DEFAULT_METADATA, Metadata, file_facts, sha256_file
-from .plan import metadata_checks
+from .plan import file_checks, metadata_checks
 from .platforms import UploadRequest, get_platform
 
 TOKEN_PREFIX = "confirm-"
@@ -51,11 +52,23 @@ def _refuse_invalid_metadata(platform_id: str, metadata: Metadata) -> None:
                            {"platform": platform_id, "failed": failed, "uploaded": False})
 
 
+def _refuse_unsendable_format(platform_id: str, item: Dict[str, Any]) -> None:
+    """A file the platform's upload cannot name a type for (TikTok: MP4, MOV or WebM only, ADR-006) is refused before a
+    token is printed, like invalid metadata. Where the format list is advisory (YouTube) plan only warns."""
+    failed = [r for r in file_checks(platform_id, item["path"], item["size"])
+              if r["status"] == "FAIL" and r.get("limit_key") == "video.file_formats"]
+    if failed:
+        raise PublishError("INVALID_ARGUMENT", f"{failed[0]['value']} files cannot be uploaded to this platform (it takes "
+                           f"{', '.join(failed[0]['limit'])}); {failed[0]['fix']}. Nothing was uploaded",
+                           {"platform": platform_id, "failed": failed, "uploaded": False})
+
+
 def upload(path: str, platform_id: str, confirm: Optional[str] = None, metadata: Optional[Metadata] = None) -> Dict[str, Any]:
     uploader = get_platform(platform_id)                     # UNKNOWN_PLATFORM before the file is read
     item = file_facts(path, "deliverable")
     md = metadata or DEFAULT_METADATA
     _refuse_invalid_metadata(platform_id, md)                # METADATA_INVALID before any token is printed or checked
+    _refuse_unsendable_format(platform_id, item)             # INVALID_ARGUMENT, likewise
     token = confirm_token(platform_id, item["sha256"], item["size"], md)
     base = {"skill": {"id": SKILL_ID, "version": __version__}, "platform": uploader.spec(), "input": item,
             "metadata": md.to_dict()}
@@ -77,7 +90,7 @@ def upload(path: str, platform_id: str, confirm: Optional[str] = None, metadata:
     request = UploadRequest(platform=platform_id, path=item["path"], size=item["size"], sha256=item["sha256"],
                             metadata=md.to_dict(), confirm_token=token)
     try:
-        result = uploader.upload(request, secrets)           # the only network use in the package (ADR-004, ADR-005)
+        result = uploader.upload(request, secrets)           # the only network use in the package (ADR-004..006)
     except PublishError as e:
         raise PublishError(e.code, creds.redact(e.message), creds.redact(e.details), e.retryable) from None
     return creds.redact(dict(base, ok=True, dry_run=False, uploaded=True, network_used=True, confirm_token=token,

@@ -37,6 +37,14 @@ _VM_REF_EDIT = "https://developer.vimeo.com/api/reference/videos#edit_video"
 _VM_RATE = "https://developer.vimeo.com/guidelines/rate-limiting"
 _VM_NO_SPEC = ("ffmpeg-skill has no `vimeo` delivery spec (scripts/_platforms.py, 2026-10-31); ffmpeg-skill owns it, so "
                "it is not written here (plan reports the delivery spec as UNCHECKED)")
+# TikTok (roadmap step 5, ADR-006): the Content Posting API pages on developers.tiktok.com, read on the same day.
+_TT_DIRECT = "https://developers.tiktok.com/doc/content-posting-api-reference-direct-post"
+_TT_TRANSFER = "https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide"
+_TT_CREATOR = "https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info"
+_TT_STATUS = "https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status"
+_TT_START = "https://developers.tiktok.com/doc/content-posting-api-get-started"
+_TT_OAUTH = "https://developers.tiktok.com/doc/oauth-user-access-token-management"
+_TT_CHECK = "ffmpeg-skill `check --platform tiktok` (scripts/_platforms.py owns the value)"
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -141,6 +149,77 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                               "A call to this method has a quota cost of 400 units.", checked=False),
         "uploads.per_user": _unknown("the API returns uploadLimitExceeded when \"the user has exceeded the number of videos "
                                      "they may upload\" but states no number", [_YT_INSERT]),
+    },
+    "tiktok": {
+        # the video file. "4GB" is read as decimal, the smaller reading (ffmpeg-skill's delivery spec has its own value).
+        "video.max_bytes": _known(4 * 1000 ** 3, "bytes", _TT_TRANSFER, "Size restrictions: Maximum of 4GB",
+                                  documented_as="4GB"),
+        "video.max_duration_s": _known(10 * 60, "seconds", _TT_TRANSFER,
+                                       "The longest video a developer can send via the initialize Upload Video endpoint "
+                                       "is 10 minutes."),
+        "video.creator_max_duration_s": _unknown("per creator: \"All TikTok creators can post 3-minute videos, while some "
+                                                 "have access to post 5-minute or 10-minute videos\"; creator_info answers "
+                                                 "max_video_post_duration_sec, which plan cannot read offline (the upload "
+                                                 "receipt reports it)", [_TT_TRANSFER, _TT_CREATOR]),
+        # MP4, WebM and MOV only: the upload's Content-Type must be one of video/mp4, video/quicktime, video/webm, so
+        # an unlisted extension is a FAIL here (enforced), not a WARN as on YouTube.
+        "video.file_formats": _known([".mp4", ".webm", ".mov"], "file extensions", _TT_TRANSFER,
+                                     "Supported media formats: MP4 (recommended), WebM, MOV", enforced=True,
+                                     content_types={".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"},
+                                     also=_TT_DIRECT + " (the PUT Content-Type: video/mp4, video/quicktime, video/webm)"),
+        "video.codecs": _delegated("video codec", _TT_CHECK),
+        "video.resolution": _delegated("frame size", _TT_CHECK),
+        "video.aspect": _delegated("aspect ratio", _TT_CHECK),
+        "video.fps": _delegated("frame rate", _TT_CHECK),
+        "upload.chunk_bytes": _known("5-64 MB per chunk; the final chunk up to 128 MB; a file under 5 MB whole",
+                                     "bytes per PUT", _TT_TRANSFER,
+                                     "Each chunk must be at least 5 MB but no greater than 64 MB, except for the final "
+                                     "chunk, which can be greater than chunk_size (up to 128 MB) to accommodate any "
+                                     "trailing bytes. ... Videos with a total size less than 5 MB must be uploaded as a "
+                                     "whole", checked=False,
+                                     used="64 000 000 bytes (at most 64 MB under either reading); a file of at most "
+                                          "that size is sent whole"),
+        "upload.max_chunks": _known(1000, "chunks", _TT_TRANSFER, "Minimum of 1 chunk and maximum of 1,000 chunks.",
+                                    checked=False),
+        "upload.url_validity_s": _known(3600, "seconds", _TT_DIRECT, "The upload_url is valid for one hour after "
+                                                                       "issuance.", checked=False),
+        # metadata: TikTok's `title` is the post's caption; there is no separate description field.
+        "title.max_utf16_units": _known(2200, "UTF-16 code units", _TT_DIRECT,
+                                        "title: The video caption. ... The maximum length is 2200 in UTF-16 runes."),
+        "title.forbidden_chars": _unknown("no forbidden characters are stated", [_TT_DIRECT]),
+        "privacy.values": _known(["private", "public"], "enum (this skill's names, sent as privacy_level)", _TT_DIRECT,
+                                 "privacy_level ... PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, "
+                                 "SELF_ONLY. The provided value must match one of the privacy_level_options returned in "
+                                 "the /creator_info/query/ API.",
+                                 maps_to={"private": "SELF_ONLY", "public": "PUBLIC_TO_EVERYONE"},
+                                 api_values=["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR",
+                                             "SELF_ONLY"],
+                                 not_offered="unlisted (TikTok has no link-only level), MUTUAL_FOLLOW_FRIENDS and "
+                                             "FOLLOWER_OF_CREATOR (no name for them in this skill's three)",
+                                 api_default="none: privacy_level is required; this skill sends SELF_ONLY unless "
+                                             "--privacy public"),
+        # account and app limits
+        "quota.daily_posts": _unknown("per creator: \"spam_risk_too_many_posts: the daily post cap is reached for the "
+                                      "user\". No number is stated", [_TT_DIRECT, _TT_START]),
+        "quota.active_users": _unknown("per app: \"reached_active_user_cap\", the client's daily quota of active "
+                                       "publishing users. No number is stated", [_TT_DIRECT]),
+        "rate_limit.requests_per_minute": _known({"video/init": 6, "creator_info/query": 20, "status/fetch": 30},
+                                                 "requests per minute per user access token", _TT_DIRECT,
+                                                 "Each user access_token is limited to 6 requests per minute.",
+                                                 checked=False,
+                                                 also={"creator_info/query": _TT_CREATOR + " (20 per minute)",
+                                                       "status/fetch": _TT_STATUS + " (30 per minute)"}),
+        "upload.audit": _known("an unaudited app's posts are private (SELF_ONLY viewing) until TikTok audits it",
+                               "app requirement", _TT_START,
+                               "All content posted by unaudited clients will be restricted to private viewing mode.",
+                               checked=False),
+        "token.scopes": _known(["video.publish"], "OAuth scopes", _TT_DIRECT,
+                               "Scope: video.publish", checked=False,
+                               note="not checked offline; TikTok answers 401 scope_not_authorized (AUTH_FAILED)"),
+        "token.lifetime_s": _known(24 * 3600, "seconds (access token)", _TT_OAUTH,
+                                   "It is valid for 24 hours after initial issuance.", checked=False,
+                                   note="this skill reads an access token only; refreshing it is not implemented "
+                                        "(ADR-006)"),
     },
     "vimeo": {
         # the video file. upload.size is stated in bytes, so there is no decimal/binary question here.
