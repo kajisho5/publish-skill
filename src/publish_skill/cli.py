@@ -20,7 +20,8 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
                                                    dry run: what would be uploaded, and the confirmation token
   publish upload FILE --platform ID [METADATA] --confirm TOKEN --json
                                                    the upload itself, after QC and a human's approval (YouTube,
-                                                   Vimeo: resumable uploads; prints a receipt)
+                                                   Vimeo, TikTok, X: resumable or chunked uploads; prints a
+                                                   receipt)
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
@@ -138,7 +139,8 @@ def _human(doc: Dict[str, Any]) -> None:
             print(f"  - {w}")
     elif doc.get("uploaded") and "result" in doc:
         r = doc["result"]
-        print(f"uploaded {doc['input']['path']} to {doc['platform']['name']}: video {r['video_id']} (privacy {r['privacy']}) {r['url']}")
+        print(f"uploaded {doc['input']['path']} to {doc['platform']['name']}: video {r['video_id']} (privacy {r['privacy']})"
+              + (f" {r['url']}" if r.get("url") else ""))
         if r.get("thumbnail"):
             print("  thumbnail set")
         for c in r.get("captions") or []:

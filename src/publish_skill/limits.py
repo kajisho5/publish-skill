@@ -13,6 +13,8 @@ used, so a file `plan` passes is never over the limit under either reading; `doc
 To change a value: re-read the page, update `value`, `quote` and `accessed` together, and the README table."""
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 ACCESSED = "2026-10-31"
@@ -45,6 +47,20 @@ _TT_STATUS = "https://developers.tiktok.com/doc/content-posting-api-reference-ge
 _TT_START = "https://developers.tiktok.com/doc/content-posting-api-get-started"
 _TT_OAUTH = "https://developers.tiktok.com/doc/oauth-user-access-token-management"
 _TT_CHECK = "ffmpeg-skill `check --platform tiktok` (scripts/_platforms.py owns the value)"
+# X (roadmap step 5, ADR-007): the X API v2 pages on docs.x.com and X's own twitter-text configuration, read on the
+# same day.
+_X_CHUNKED = "https://docs.x.com/x-api/media/quickstart/media-upload-chunked"
+_X_INIT = "https://docs.x.com/x-api/media/initialize-media-upload"
+_X_APPEND = "https://docs.x.com/x-api/media/append-media-upload"
+_X_POST = "https://docs.x.com/x-api/posts/create-post"
+_X_RATE = "https://docs.x.com/x-api/fundamentals/rate-limits"
+_X_COUNT = "https://docs.x.com/fundamentals/counting-characters"
+_X_TEXT_CONFIG = "https://github.com/twitter/twitter-text/blob/master/config/v3.json"
+_X_OAUTH = "https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code"
+_X_CHECK = "ffmpeg-skill `check --platform x` (scripts/_platforms.py owns the value)"
+# twitter-text v3: code points in these ranges weigh 1 (100 of scale 100), every other code point 2; a URL counts 23
+X_WEIGHT_ONE_RANGES = ((0, 4351), (8192, 8205), (8208, 8223), (8242, 8247))
+X_URL_LENGTH = 23
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -221,6 +237,63 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                    note="this skill reads an access token only; refreshing it is not implemented "
                                         "(ADR-006)"),
     },
+    "x": {
+        # the video file: tweet_video, an account without Premium (Premium allows more; plan cannot tell, so the
+        # smaller values are checked). "8 GB" is read as decimal, the smaller reading.
+        "video.max_bytes": _known(8 * 1000 ** 3, "bytes", _X_CHUNKED,
+                                  "tweet_video / amplify_video | 20 min / 8 GB · Premium: 125 min / 16 GB",
+                                  documented_as="8 GB"),
+        "video.max_duration_s": _known(20 * 60, "seconds", _X_CHUNKED,
+                                       "tweet_video / amplify_video | 20 min / 8 GB · Premium: 125 min / 16 GB",
+                                       applies_to="accounts without Premium (Premium: 125 minutes)"),
+        # initialize's media_type must name one of these, so the list is enforced (as on TikTok)
+        "video.file_formats": _known([".mp4", ".mov", ".webm", ".ts"], "file extensions", _X_INIT,
+                                     "media_type: video/mp4, video/webm, video/mp2t, video/quicktime", enforced=True,
+                                     content_types={".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+                                                    ".ts": "video/mp2t"}),
+        "video.codecs": _delegated("video codec", _X_CHECK),
+        "video.resolution": _delegated("frame size", _X_CHECK),
+        "video.aspect": _delegated("aspect ratio", _X_CHECK),
+        "video.fps": _delegated("frame rate", _X_CHECK),
+        "upload.chunk_bytes": _known("at or below 5 MB per segment (the server maximum is 8 MB)", "bytes per append",
+                                     _X_CHUNKED, "keep each chunk at or below 5 MB", checked=False,
+                                     used="4 MiB (4 194 304 bytes): below 5 MB under either reading"),
+        "upload.max_segments": _known(10000, "segments", _X_APPEND, "segment_index: integer, 0 to 9999", checked=False),
+        "upload.session_validity_s": _known(86400, "seconds", _X_CHUNKED,
+                                            "expires_after_secs (86400 in the example)", checked=False),
+        # metadata: the post's text is the bound title; X weighs characters (twitter-text), NFC-normalised
+        "title.max_weighted": _known(280, "weighted characters (twitter-text v3)", _X_COUNT,
+                                     "Posts can be up to 280 characters. Some characters count more than others. ... "
+                                     "Emojis, CJK (Chinese, Japanese, Korean) characters, and other Unicode characters "
+                                     "count as 2 by default. ... Any URL counts as 23 characters",
+                                     weights=_X_TEXT_CONFIG + " (maxWeightedTweetLength 280; ranges 0-4351, 8192-8205, "
+                                                              "8208-8223, 8242-8247 weigh 1; defaultWeight 2; "
+                                                              "transformedURLLength 23)",
+                                     note="exact for text with no URL and no emoji; otherwise plan computes an upper "
+                                          "bound and WARNs (not FAILs) when only the bound is over"),
+        "title.forbidden_chars": _unknown("no forbidden characters are stated", [_X_POST, _X_COUNT]),
+        "privacy.values": _known(["public"], "enum (this skill's names)", _X_POST,
+                                 "the create-post request has no field that makes a post private or unlisted",
+                                 not_offered="private and unlisted: X posts are public (for_super_followers_only and "
+                                             "nullcast are not privacy levels and are not sent)",
+                                 api_default="public; this skill's default (`private`) is a FAIL here, so --privacy "
+                                             "public must be given"),
+        "rate_limit.requests": _known({"POST /2/tweets": "100 per 15 minutes per user",
+                                       "media upload initialize / append / finalize": "1,875 per 15 minutes per user",
+                                       "GET /2/media/upload": "1,000 per 15 minutes per user"},
+                                      "requests per window per user token", _X_RATE,
+                                      "POST /2/tweets | 10,000/24hrs | 100/15min", checked=False),
+        "quota.daily_posts": _unknown("no per-account daily post cap is stated for the API beyond the rate limits",
+                                      [_X_POST, _X_RATE]),
+        "token.scopes": _known(["media.write", "tweet.write", "tweet.read", "users.read"], "OAuth 2.0 scopes", _X_POST,
+                               "POST /2/tweets: tweet.read, users.read, tweet.write", checked=False,
+                               also=_X_INIT + " (media.write)",
+                               note="not checked offline; X answers 401 or 403 (AUTH_FAILED)"),
+        "token.lifetime_s": _known(2 * 3600, "seconds (access token)", _X_OAUTH,
+                                   "will only stay valid for two hours", checked=False,
+                                   note="this skill reads an access token only; refreshing it (offline.access) is not "
+                                        "implemented (ADR-007)"),
+    },
     "vimeo": {
         # the video file. upload.size is stated in bytes, so there is no decimal/binary question here.
         "video.max_bytes": _known(322122547200, "bytes", _VM_REF_UPLOAD,
@@ -312,6 +385,28 @@ def tags_length(tags: List[str]) -> int:
     if not tags:
         return 0
     return sum(len(t) + (2 if " " in t else 0) for t in tags) + len(tags) - 1
+
+
+def x_weighted_length(text: str) -> Dict[str, Any]:
+    """The length X counts for a post's text (twitter-text v3), NFC-normalised: code points in X_WEIGHT_ONE_RANGES
+    weigh 1, every other 2, a URL 23. `exact` is true when the text has no URL-like token and no emoji, where this is
+    the count X makes; otherwise `value` is an upper bound (a URL-like token counts max(its weight, 23) and each code
+    point of an emoji sequence 2, where X counts the whole sequence as 2)."""
+    text = unicodedata.normalize("NFC", text)
+    exact = True
+    n = 0
+    for token in re.split(r"(\s+)", text):
+        weight = 0
+        for ch in token:
+            cp = ord(ch)
+            if cp >= 0x1F000 or cp in (0x200D, 0xFE0F) or 0x2600 <= cp <= 0x27BF:
+                exact = False
+            weight += 1 if any(a <= cp <= b for a, b in X_WEIGHT_ONE_RANGES) else 2
+        if re.search(r"://|^www\.|\.[A-Za-z]{2,}(/|$)", token):
+            exact = False
+            weight = max(weight, X_URL_LENGTH)
+        n += weight
+    return {"value": n, "exact": exact}
 
 
 def summary(platform_id: str) -> Dict[str, List[str]]:

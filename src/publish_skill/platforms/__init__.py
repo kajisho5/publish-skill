@@ -8,10 +8,11 @@ from ..errors import PublishError
 from .base import Uploader, UploadRequest
 from .tiktok import TikTokUploader
 from .vimeo import VimeoUploader
+from .x import XUploader
 from .youtube import YouTubeUploader
 
 _REGISTRY: Dict[str, Type[Uploader]] = {YouTubeUploader.id: YouTubeUploader, VimeoUploader.id: VimeoUploader,
-                                        TikTokUploader.id: TikTokUploader}
+                                        TikTokUploader.id: TikTokUploader, XUploader.id: XUploader}
 
 __all__ = ["Uploader", "UploadRequest", "get_platform", "platform_ids"]
 
