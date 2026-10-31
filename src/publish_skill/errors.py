@@ -12,6 +12,7 @@ ERROR_TABLE: Dict[str, Tuple[int, bool]] = {
     "INPUT_NOT_FOUND": (2, False),        # the deliverable does not exist or is not a regular file
     "UNKNOWN_PLATFORM": (2, False),       # the platform id is not in the registry
     "CONFIRM_MISMATCH": (2, False),       # --confirm was given, but not the token the dry run printed for this deliverable
+    "METADATA_INVALID": (2, False),       # the title / description / tags / privacy / thumbnail / captions break an upload limit
     "CREDENTIALS_MISSING": (3, False),    # an environment variable the platform needs is unset or empty
     "NOT_IMPLEMENTED": (5, False),        # declared in the contract, not implemented yet (see the roadmap step)
     "CANCELLED": (6, True),               # interrupted by a signal

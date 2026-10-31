@@ -2,15 +2,21 @@
 
 stdout: with --json exactly one JSON document, on success and failure alike. stderr: diagnostics only. Every
 document passes through credentials.redact before it is printed. Exit code: 0 on success; doctor exits 1 when its
-status is `fail`; an error exits errors.EXIT_CODES[code].
+status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error exits errors.EXIT_CODES[code].
 
   publish contract --json                          the contract (alias: skill --json)
   publish doctor --json                            Python, ffmpeg-skill, platforms [--offline] [--ffmpeg-skill DIR]
   publish platforms --json                         registered platforms and their credential variables
-  publish upload FILE --platform ID --json         dry run: what would be uploaded, and the confirmation token
-  publish upload FILE --platform ID --confirm TOKEN --json
+  publish plan FILE --platform ID [METADATA] --json
+                                                   the deliverable and its metadata against the platform's limits
+                                                   (offline; delivery spec rows from ffmpeg-skill check)
+  publish upload FILE --platform ID [METADATA] --json
+                                                   dry run: what would be uploaded, and the confirmation token
+  publish upload FILE --platform ID [METADATA] --confirm TOKEN --json
                                                    the upload itself (every uploader is a stub in this release)
-  publish plan FILE --platform ID --json           roadmap step 2 (NOT_IMPLEMENTED)"""
+
+  METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
+            [--thumbnail IMAGE] [--caption FILE ...]   (the same flags on plan and upload; the token binds them)"""
 from __future__ import annotations
 
 import argparse
@@ -21,10 +27,28 @@ from typing import Any, Dict, List, Optional
 from . import PACKAGE_NAME, SKILL_ID, __version__
 from .contract import contract
 from .credentials import redact
-from .doctor import OP_STEP, doctor, platforms_report
+from .doctor import doctor, platforms_report
 from .errors import PublishError
+from .metadata import DEFAULT_PRIVACY, build
+from .plan import plan
 from .platforms import get_platform
 from .upload import upload
+
+
+def _metadata_args(p: argparse.ArgumentParser) -> None:
+    g = p.add_argument_group("metadata (the same flags on plan and upload; the confirmation token binds every one)")
+    g.add_argument("--title")
+    g.add_argument("--description")
+    g.add_argument("--description-file", metavar="FILE", help="UTF-8 text file holding the description")
+    g.add_argument("--tag", action="append", dest="tags", metavar="TAG", help="one tag (repeat for more)")
+    g.add_argument("--privacy", help=f"private | unlisted | public (default: {DEFAULT_PRIVACY})")
+    g.add_argument("--thumbnail", metavar="IMAGE")
+    g.add_argument("--caption", action="append", dest="captions", metavar="FILE", help="a captions file (repeat for more)")
+
+
+def _metadata(args: argparse.Namespace):
+    return build(title=args.title, description=args.description, description_file=args.description_file, tags=args.tags,
+                 privacy=args.privacy, thumbnail=args.thumbnail, captions=args.captions)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,12 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("upload", help="dry run by default; uploads only with the --confirm token the dry run printed")
     u.add_argument("deliverable")
     u.add_argument("--platform", required=True)
-    u.add_argument("--confirm", metavar="TOKEN", help="the confirm_token printed by the dry run for this file and platform")
+    u.add_argument("--confirm", metavar="TOKEN", help="the confirm_token printed by the dry run for this file, metadata and platform")
     u.add_argument("--json", action="store_true")
-    pl = sub.add_parser("plan", help="check a deliverable against the platform's upload limits (roadmap step 2)")
+    _metadata_args(u)
+    pl = sub.add_parser("plan", help="check a deliverable and its metadata against the platform's limits (offline)")
     pl.add_argument("deliverable")
     pl.add_argument("--platform", required=True)
+    pl.add_argument("--ffmpeg-skill", help="ffmpeg-skill checkout directory (default: env / ~/.claude/skills/ffmpeg-skill / ./vendor / ..)")
     pl.add_argument("--json", action="store_true")
+    _metadata_args(pl)
     return ap
 
 
@@ -66,6 +93,12 @@ def _human(doc: Dict[str, Any]) -> None:
     if doc.get("error"):
         err = doc["error"]
         sys.stderr.write(f"error [{err['code']}]: {err['message']}\n")
+    elif "verdict" in doc:
+        print(f"plan {doc['input']['path']} for {doc['platform']['name']}: {doc['verdict']} (nothing uploaded)")
+        for r in doc["checks"]:
+            print(f"  {r['status']:9} {r['check']}: {r['value']!r} (limit {r['limit']!r}, {r['owner']})"
+                  + (f"  fix: {r['fix']}" if r.get("fix") and r["status"] != "PASS" else ""))
+        print(f"  {doc['next_step']}")
     elif "checks" in doc:
         print(f"{PACKAGE_NAME} {__version__}: {doc['status']}")
         print(f"  ffmpeg-skill  {doc['checks']['ffmpeg_skill']['status']}")
@@ -98,13 +131,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.cmd == "platforms":
             _emit({"ok": True, "skill": {"id": SKILL_ID, "version": __version__}, "platforms": platforms_report()}, as_json)
             return 0
+        if args.cmd in ("upload", "plan"):
+            get_platform(args.platform)                       # UNKNOWN_PLATFORM before any file is read
         if args.cmd == "upload":
-            _emit(upload(args.deliverable, args.platform, confirm=args.confirm), as_json)
+            _emit(upload(args.deliverable, args.platform, confirm=args.confirm, metadata=_metadata(args)), as_json)
             return 0
         if args.cmd == "plan":
-            get_platform(args.platform)
-            raise PublishError("NOT_IMPLEMENTED", f"`publish plan` arrives in roadmap step {OP_STEP['plan']}",
-                               {"roadmap_step": OP_STEP["plan"]})
+            doc = plan(args.deliverable, args.platform, _metadata(args), ffmpeg_skill_dir=args.ffmpeg_skill)
+            _emit(doc, as_json)
+            return 0 if doc["ok"] else 1
     except PublishError as e:
         _emit({"ok": False, "skill": {"id": SKILL_ID, "version": __version__}, "error": e.to_dict()}, as_json)
         return e.exit_code

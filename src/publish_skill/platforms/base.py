@@ -26,10 +26,13 @@ class Uploader:
     # environment variables this platform's credentials are read from (ADR-001: environment only until step 3)
     credential_env: Tuple[str, ...] = ()
     docs_url = ""
+    # the `check --platform` name of ffmpeg-skill's delivery spec for this platform (ffmpeg-skill owns that spec)
+    ffmpeg_skill_platform = ""
 
     def spec(self) -> Dict[str, Any]:
         return {"id": self.id, "name": self.name, "implemented": self.implemented, "roadmap_step": self.roadmap_step,
-                "credential_env": list(self.credential_env), "docs_url": self.docs_url}
+                "credential_env": list(self.credential_env), "docs_url": self.docs_url,
+                "ffmpeg_skill_platform": self.ffmpeg_skill_platform}
 
     def upload(self, request: UploadRequest, credentials: Any) -> Dict[str, Any]:
         raise PublishError("NOT_IMPLEMENTED", f"the {self.name} uploader is not implemented yet (roadmap step {self.roadmap_step}); "

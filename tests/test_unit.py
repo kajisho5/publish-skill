@@ -3,18 +3,16 @@ confirmation gate, doctor, and the OS registry conformance and schema checks. Ev
 patched to fail, so any attempt to reach the network is a test failure; nothing is uploaded."""
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
-import shutil
 import socket
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-from helpers import OS_DIR, ROOT, env, run_cli, run_cli_raw
+from helpers import OS_DIR, ROOT, OfflineTestCase, env, run_cli, run_cli_raw
 
 from publish_skill import SKILL_ID, __version__
 from publish_skill import credentials as creds
@@ -29,25 +27,6 @@ SECRETS = {"PUBLISH_YOUTUBE_CLIENT_ID": "cid-7f3a91e2.apps.example",
            "PUBLISH_YOUTUBE_CLIENT_SECRET": "csecret-Zq81LmP0sW",
            "PUBLISH_YOUTUBE_REFRESH_TOKEN": "1//refresh-XyZ0987654321"}
 NO_SECRETS = {k: None for k in YT_VARS}
-
-
-def _no_network(*_a, **_k):
-    raise AssertionError("network access attempted")
-
-
-class OfflineTestCase(unittest.TestCase):
-    """Fails the test on any socket connect or name lookup."""
-
-    def setUp(self):
-        for target in ("socket.socket.connect", "socket.socket.connect_ex", "socket.create_connection", "socket.getaddrinfo"):
-            p = mock.patch(target, _no_network)
-            p.start()
-            self.addCleanup(p.stop)
-        self.tmp = tempfile.mkdtemp(prefix="publish-test-")
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.video = os.path.join(self.tmp, "final.mp4")
-        with open(self.video, "wb") as fh:
-            fh.write(b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 8)
 
 
 class NetworkGuardTests(OfflineTestCase):
@@ -85,7 +64,9 @@ class ContractTests(OfflineTestCase):
         for p in c["provides"]:
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
             self.assertIn(p["tool_id"], tool_ids)
-            self.assertEqual(p["lifecycle"], "PROPOSED")       # nothing uploads or plans yet (ADR-001)
+        # plan works since step 2 (ADR-002); nothing uploads yet (ADR-001)
+        self.assertEqual({p["id"]: p["lifecycle"] for p in c["provides"]},
+                         {"publish.plan": "EXPERIMENTAL", "publish.upload": "PROPOSED"})
         for d in c["dependencies"]:
             self.assertIsInstance(d["version_range"], str)
             self.assertFalse(d["version_range"].replace(".", "").isdigit(), d)
@@ -123,12 +104,32 @@ class ContractTests(OfflineTestCase):
 
     def test_no_shell_and_no_network_code_in_the_scaffold(self):
         # No uploader is implemented, so no module may contain network code yet; step 4 adds it to its uploader only.
+        # Only the ffmpeg-skill adapter may start a process (ADR-002); every other banned word stays banned there too.
+        starts_process = []
         for f in (ROOT / "src" / "publish_skill").rglob("*.py"):
             text = f.read_text(encoding="utf-8")
             self.assertNotIn("shell=True", text, f.name)
             for banned in ("import socket", "urllib.request", "http.client", "import requests", "urlopen", "httpx",
-                           "subprocess", "os.system"):
+                           "subprocess", "os.system", "os.popen", "os.exec", "os.spawn"):
+                if banned == "subprocess" and f.name == "adapter.py" and f.parent.name == "publish_skill":
+                    continue
                 self.assertNotIn(banned, text, f"{f.name}: {banned}")
+            if "subprocess" in text:
+                starts_process.append(f.name)
+        self.assertEqual(starts_process, ["adapter.py"])
+
+    def test_the_adapter_starts_processes_from_an_argv_list_without_a_shell(self):
+        tree = ast.parse((ROOT / "src" / "publish_skill" / "adapter.py").read_text(encoding="utf-8"))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess"]
+        self.assertEqual([c.func.attr for c in calls], ["run"])        # one call site, subprocess.run
+        call = calls[0]
+        self.assertIsInstance(call.args[0], ast.Name)                  # the argv list built just above it, not a string
+        kw = {k.arg: k.value for k in call.keywords}
+        self.assertIsInstance(kw["shell"], ast.Constant)
+        self.assertIs(kw["shell"].value, False)
+        for k in ("timeout", "env", "stdin"):
+            self.assertIn(k, kw)
 
 
 class PlatformTests(OfflineTestCase):
@@ -257,10 +258,6 @@ class UploadGateTests(OfflineTestCase):
         upload(self.video, "youtube")
         self.assertEqual(before, (sha256_file(self.video), os.path.getmtime(self.video)))
 
-    def test_plan_is_not_implemented_yet(self):
-        rc, doc = run_cli("plan", self.video, "--platform", "youtube", "--json")
-        self.assertEqual((rc, doc["error"]["code"], doc["error"]["details"]["roadmap_step"]), (5, "NOT_IMPLEMENTED", 2))
-
     def test_human_output_is_redacted_too(self):
         token = upload(self.video, "youtube")["confirm_token"]
         with env(**SECRETS):
@@ -290,7 +287,9 @@ class SecretNeverPrintedTests(OfflineTestCase):
                  ("upload", self.video, "--platform", "youtube", "--json"),
                  ("upload", self.video, "--platform", "youtube", "--confirm", token, "--json"),
                  ("upload", self.video, "--platform", "youtube", "--confirm", "nope", "--json"),
-                 ("plan", self.video, "--platform", "youtube", "--json")]
+                 ("plan", self.video, "--platform", "youtube", "--ffmpeg-skill", os.path.join(self.tmp, "none"), "--json"),
+                 ("plan", self.video, "--platform", "youtube", "--ffmpeg-skill", os.path.join(self.tmp, "none"),
+                  "--title", SECRETS["PUBLISH_YOUTUBE_CLIENT_SECRET"], "--json")]
         with env(**SECRETS):
             for argv in argvs:
                 rc, out, err = run_cli_raw(*argv)
@@ -306,7 +305,7 @@ class DoctorTests(OfflineTestCase):
         self.assertEqual((d["status"], d["ok"], d["ready_platforms"]), ("degraded", True, []))
         self.assertEqual(d["checks"]["ffmpeg_skill"]["status"], "MISSING")
         self.assertEqual(d["checks"]["platforms"]["youtube"]["credentials"]["variables"], {v: "absent" for v in YT_VARS})
-        self.assertEqual(d["checks"]["operations"], {"plan": {"implemented": False, "roadmap_step": 2},
+        self.assertEqual(d["checks"]["operations"], {"plan": {"implemented": True, "roadmap_step": 2},
                                                      "upload": {"implemented": False, "roadmap_step": 4}})
         self.assertEqual(d["problems"], [])
 
