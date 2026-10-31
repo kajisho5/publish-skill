@@ -22,8 +22,8 @@ from .adapter import detect
 from .platforms import get_platform, platform_ids
 
 DOCTOR_SCHEMA = f"{SKILL_ID}/doctor@1"
-# op -> roadmap step that implements it; plan arrived in step 2 (ADR-002), the uploaders arrive in step 4
-IMPLEMENTED_OPS: Dict[str, bool] = {"plan": True, "upload": False}
+# op -> roadmap step that implements it; plan arrived in step 2 (ADR-002), the YouTube uploader in step 4 (ADR-004)
+IMPLEMENTED_OPS: Dict[str, bool] = {"plan": True, "upload": True}
 OP_STEP = {"plan": 2, "upload": 4}
 FFMPEG_SKILL_ENV = ("PUBLISH_FFMPEG_SKILL_DIR", "VIDEO_AGENT_FFMPEG_SKILL_DIR")
 FFMPEG_SKILL_MARKER = "scripts/_contract.py"

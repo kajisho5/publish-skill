@@ -5,8 +5,11 @@ which metadata, and the confirmation token, and opens no connection. The token i
 deliverable's bytes and the metadata (title, description, tags, privacy, and the thumbnail's and captions' bytes), so a
 confirmation given after one dry run cannot upload a different file, the same file to another platform, or the same
 file with edited metadata. Only the exact token goes through; then the credentials are read, from the environment or
-the OS keychain (ADR-003), and the platform's uploader runs. Every uploader in this release is a stub that raises NOT_IMPLEMENTED, so nothing is ever
-uploaded yet.
+the OS keychain (ADR-003), and the platform's uploader runs with exactly the request the token bound (YouTube: the
+resumable upload in platforms/youtube.py, ADR-004).
+
+The receipt of an upload, and the error of a failed one, pass through credentials.redact here, before they reach the
+CLI (which redacts again): no credential, access token or session URI is in either.
 
 Metadata that breaks one of the platform's upload limits (limits.py) is refused as METADATA_INVALID before a token is
 printed or checked: `publish plan` shows every row and its fix.
@@ -27,7 +30,7 @@ from .platforms import UploadRequest, get_platform
 
 TOKEN_PREFIX = "confirm-"
 TOKEN_BINDS = ["platform", "deliverable sha256", "deliverable size", "title", "description", "tags", "privacy",
-               "thumbnail sha256 and size", "captions sha256 and size, in order"]
+               "thumbnail sha256 and size", "captions sha256, size and language, in order"]
 __all__ = ["TOKEN_PREFIX", "TOKEN_BINDS", "confirm_token", "sha256_file", "upload"]
 
 
@@ -65,8 +68,17 @@ def upload(path: str, platform_id: str, confirm: Optional[str] = None, metadata:
         raise PublishError("CONFIRM_MISMATCH", "the --confirm token does not match this deliverable, metadata and platform; "
                            "run without --confirm to see the current token. Nothing was uploaded",
                            {"platform": platform_id, "path": item["path"], "uploaded": False})
+    empty = [what for what, f in [("deliverable", item)] + [("thumbnail", md.thumbnail)] + [("captions", c) for c in md.captions]
+             if f is not None and f["size"] == 0]
+    if empty:
+        raise PublishError("INVALID_ARGUMENT", f"empty file: {', '.join(empty)}; nothing was uploaded",
+                           {"platform": platform_id, "empty": empty, "uploaded": False})
     secrets = creds.load(platform_id)                        # the first credential read; CREDENTIALS_MISSING names variables
     request = UploadRequest(platform=platform_id, path=item["path"], size=item["size"], sha256=item["sha256"],
-                            metadata=md.to_dict())
-    result = uploader.upload(request, secrets)               # NOT_IMPLEMENTED for every platform in this release
-    return dict(base, ok=True, dry_run=False, uploaded=True, network_used=True, result=result)  # pragma: no cover
+                            metadata=md.to_dict(), confirm_token=token)
+    try:
+        result = uploader.upload(request, secrets)           # the only network use in the package (ADR-004)
+    except PublishError as e:
+        raise PublishError(e.code, creds.redact(e.message), creds.redact(e.details), e.retryable) from None
+    return creds.redact(dict(base, ok=True, dry_run=False, uploaded=True, network_used=True, confirm_token=token,
+                             result=result))

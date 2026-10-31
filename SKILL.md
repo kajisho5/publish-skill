@@ -1,6 +1,6 @@
 ---
 name: publish-skill
-description: Upload a finished, QC-passed deliverable to a delivery platform (YouTube first), and check it and its title, description, tags, privacy, thumbnail and captions against the platform's upload limits offline first. Use when asked to publish, upload or post a finished video to a platform, to check whether a video and its metadata will be accepted, or to check whether publishing is set up. Dry run by default; an upload needs the confirmation token the dry run printed for exactly that file, metadata and platform, and a human's approval. Credentials come from environment variables or the OS keychain (`publish auth login`) and are never printed. In this release no uploader is implemented, so nothing is ever uploaded.
+description: Upload a finished, QC-passed deliverable to a delivery platform (YouTube first), and check it and its title, description, tags, privacy, thumbnail and captions against the platform's upload limits offline first. Use when asked to publish, upload or post a finished video to a platform, to check whether a video and its metadata will be accepted, or to check whether publishing is set up. Dry run by default; an upload needs the confirmation token the dry run printed for exactly that file, metadata and platform, and a human's approval. Credentials come from environment variables or the OS keychain (`publish auth login`) and are never printed. YouTube uploads use the Data API v3 resumable upload and resume interrupted chunks.
 ---
 
 # publish-skill
@@ -17,9 +17,9 @@ Run `publish <command> ... --json` (installed by `pip install -e .`). Every comm
 | Check the file and its metadata against the platform's limits (offline) | `publish plan final.mp4 --platform youtube --title "..." --privacy unlisted --thumbnail thumb.jpg --json` |
 | What would be uploaded (dry run, no network) | `publish upload final.mp4 --platform youtube --title "..." --privacy unlisted --thumbnail thumb.jpg --json` |
 | Upload, after QC and a human's approval | the same command plus `--confirm <confirm_token from the dry run>` |
-
-Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or `--description-file`, `--tag` (repeat), `--privacy private|unlisted|public` (default `private`), `--thumbnail`, `--caption` (repeat).
 | What this skill declares | `publish contract --json` |
+
+Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or `--description-file`, `--tag` (repeat), `--privacy private|unlisted|public` (default `private`), `--thumbnail`, `--caption` (repeat) with `--caption-language` (its BCP-47 tag, e.g. `en`, one per `--caption`, in order).
 
 ## Rules
 
@@ -32,13 +32,18 @@ Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or 
 ## Report it honestly
 
 - A dry run is not an upload: say "nothing was uploaded" when `dry_run` is true. Neither is a plan.
+- An upload succeeded only when `uploaded` is true: report `result.video_id`, `result.url` and `result.privacy`, any `result.warnings`, and that YouTube is still processing it.
+- `UPLOAD_PARTIAL` (exit 4): the video **is** uploaded (`details.url`) but its thumbnail or captions are not. Say so; never run `upload` again (it would upload the video twice); the rest is added in YouTube Studio.
+- `UPLOAD_INTERRUPTED`, `QUOTA_EXCEEDED`, `UPLOAD_LIMIT_EXCEEDED` (exit 4, retryable): nothing was published. Report the reason; retry only with the human's go-ahead (a new dry run is not needed for the same file and metadata), and not before the quota or daily limit resets.
+- `UPLOAD_REJECTED` (exit 4): YouTube refused the request (`details.reasons`); nothing was published.
+- `AUTH_FAILED` (exit 3): the refresh token was refused or lacks a scope (`details`); the user stores a new one with `publish auth login --platform youtube`.
 - `plan` verdict `FAIL` / `INCOMPLETE` (exit 1): report the failing or unchecked rows with their `fix`; do not upload.
 - `METADATA_INVALID` (exit 2): the metadata breaks a limit; run `plan` to see which and how to fix it.
-- `NOT_IMPLEMENTED` (exit 5): the platform's uploader does not exist yet (YouTube arrives in roadmap step 4). Say so; do not upload some other way.
+- `NOT_IMPLEMENTED` (exit 5): the platform's uploader does not exist yet (each further platform is roadmap step 5). Say so; do not upload some other way.
 - `CREDENTIALS_MISSING` (exit 3): name the variables from `details.missing` and tell the user to set them in their environment or to run `publish auth login --platform <id>` themselves.
 - `KEYCHAIN_UNAVAILABLE` / `KEYCHAIN_ERROR` (exit 3): the OS keychain is not installed, not usable or refused; report the reason; the environment still works.
 
-Exit codes: `0` ok (including a dry run, and a plan whose verdict is PASS or WARN), `1` a plan whose verdict is FAIL or INCOMPLETE, `2` refused (`UNKNOWN_PLATFORM`, `INPUT_NOT_FOUND`, `CONFIRM_MISMATCH`, `METADATA_INVALID`, `INVALID_ARGUMENT`), `3` credentials (`CREDENTIALS_MISSING`, `KEYCHAIN_UNAVAILABLE`, `KEYCHAIN_ERROR`), `5` not implemented, `6` cancelled.
+Exit codes: `0` ok (including a dry run, and a plan whose verdict is PASS or WARN), `1` a plan whose verdict is FAIL or INCOMPLETE, `2` refused (`UNKNOWN_PLATFORM`, `INPUT_NOT_FOUND`, `CONFIRM_MISMATCH`, `METADATA_INVALID`, `INVALID_ARGUMENT`), `3` credentials (`CREDENTIALS_MISSING`, `KEYCHAIN_UNAVAILABLE`, `KEYCHAIN_ERROR`, `AUTH_FAILED`), `4` the upload (`QUOTA_EXCEEDED`, `UPLOAD_LIMIT_EXCEEDED`, `UPLOAD_INTERRUPTED`, `UPLOAD_REJECTED`, `UPLOAD_PARTIAL`), `5` not implemented, `6` cancelled.
 
 ## Not this skill's job
 

@@ -1,5 +1,11 @@
 """Shared test helpers: paths, the CLI runner (stdout and stderr captured), an environment patcher, the fake keychain
-and the offline test base class. Nothing here is part of the package.
+the offline test base class with its socket guard, and the loopback YouTube mock fixture. Nothing here is part of the
+package.
+
+No test may contact the network (ADR-001, ADR-004). OfflineTestCase patches socket connect, create_connection and
+getaddrinfo for every test so that the only address a test can reach is 127.0.0.1 on the port of a mock server the
+test itself started (LOOPBACK_PORTS); anything else, Google included, raises NetworkAttempted, a BaseException, so no
+`except Exception` in the package or the CLI can turn it into an error document: the test fails.
 
 No test may reach a real OS keychain (ADR-003). Importing this module replaces `keychain._import_keyring`, the
 package's only import of keyring, with a guard that raises RealKeychainTouched (a BaseException, so no `except
@@ -11,12 +17,13 @@ import io
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Set, Tuple
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +32,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from publish_skill import cli  # noqa: E402
 from publish_skill import credentials as creds  # noqa: E402
 from publish_skill import keychain  # noqa: E402
+from publish_skill.platforms import youtube  # noqa: E402
+
+from mock_youtube import MockYouTube  # noqa: E402
 
 FAKE_BACKEND_NAME = "fake keychain (tests)"
 
@@ -85,18 +95,57 @@ OS_DIR = _dir_from_env("AI_VIDEO_PRODUCTION_OS_DIR", "AI-video-production-OS", "
 FFMPEG_SKILL_DIR = _dir_from_env("PUBLISH_FFMPEG_SKILL_DIR", "ffmpeg-skill", "scripts/_contract.py")
 
 
-def _no_network(*_a, **_k):
-    raise AssertionError("network access attempted")
+# The loopback ports of the mock servers running now: the only addresses a test may connect to.
+LOOPBACK_PORTS: Set[int] = set()
+LOOPBACK_HOST = "127.0.0.1"
+_REAL_CONNECT = socket.socket.connect
+_REAL_CONNECT_EX = socket.socket.connect_ex
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+class NetworkAttempted(BaseException):
+    """Raised when code under test connects (or looks up a name) anywhere but a loopback mock server it started."""
+
+
+def _mock_address(host: Any, port: Any) -> bool:
+    return host == LOOPBACK_HOST and port in LOOPBACK_PORTS
+
+
+def _guard_connect(sock, address, *a, **k):
+    if isinstance(address, tuple) and len(address) >= 2 and _mock_address(address[0], address[1]):
+        return _REAL_CONNECT(sock, address)
+    raise NetworkAttempted(f"network access attempted: {address!r}")
+
+
+def _guard_connect_ex(sock, address, *a, **k):
+    if isinstance(address, tuple) and len(address) >= 2 and _mock_address(address[0], address[1]):
+        return _REAL_CONNECT_EX(sock, address)
+    raise NetworkAttempted(f"network access attempted: {address!r}")
+
+
+def _guard_create_connection(address, *a, **k):
+    if _mock_address(address[0], address[1]):
+        return _REAL_CREATE_CONNECTION(address, *a, **k)
+    raise NetworkAttempted(f"network access attempted: {address!r}")
+
+
+def _guard_getaddrinfo(host, port, *a, **k):
+    if _mock_address(host, port):
+        return _REAL_GETADDRINFO(host, port, *a, **k)
+    raise NetworkAttempted(f"name lookup attempted: {host!r}")
 
 
 class OfflineTestCase(unittest.TestCase):
-    """Fails the test on any socket connect or name lookup, gives each test a fresh fake keychain (self.keychain; its
+    """Fails the test on any socket connect or name lookup except to a loopback mock server the test started, gives each test a fresh fake keychain (self.keychain; its
     backend is self.keychain_backend) with PUBLISH_KEYCHAIN unset, and a temporary directory holding a small file named
     final.mp4."""
 
     def setUp(self):
-        for target in ("socket.socket.connect", "socket.socket.connect_ex", "socket.create_connection", "socket.getaddrinfo"):
-            p = mock.patch(target, _no_network)
+        for target, guard in (("socket.socket.connect", _guard_connect), ("socket.socket.connect_ex", _guard_connect_ex),
+                              ("socket.create_connection", _guard_create_connection),
+                              ("socket.getaddrinfo", _guard_getaddrinfo)):
+            p = mock.patch(target, guard)
             p.start()
             self.addCleanup(p.stop)
         self.keychain = fake_keychain()
@@ -112,6 +161,24 @@ class OfflineTestCase(unittest.TestCase):
         self.video = os.path.join(self.tmp, "final.mp4")
         with open(self.video, "wb") as fh:
             fh.write(b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 8)
+
+
+def youtube_mock(test: unittest.TestCase, secrets: Dict[str, str], chunk_size: int = 256 * 1024,
+                 **kw: Any) -> MockYouTube:
+    """Start a MockYouTube on 127.0.0.1 for this test and point the YouTube uploader at it: its endpoints, a 256 KiB
+    chunk, and backoff that records its waits (test.waits) instead of sleeping. Stopped when the test ends."""
+    m = MockYouTube(secrets["PUBLISH_YOUTUBE_CLIENT_ID"], secrets["PUBLISH_YOUTUBE_CLIENT_SECRET"],
+                    secrets["PUBLISH_YOUTUBE_REFRESH_TOKEN"], **kw).start(LOOPBACK_PORTS)
+    test.addCleanup(m.stop)
+    test.waits = []
+    for p in (mock.patch.object(youtube.YouTubeUploader, "token_url", m.url + "/token"),
+              mock.patch.object(youtube.YouTubeUploader, "api_base", m.url),
+              mock.patch.object(youtube.YouTubeUploader, "chunk_size", chunk_size),
+              mock.patch.object(youtube, "_sleep", test.waits.append),
+              mock.patch.object(youtube, "_rand", lambda: 0.5)):
+        p.start()
+        test.addCleanup(p.stop)
+    return m
 
 
 def run_cli_raw(*argv: str) -> Tuple[int, str, str]:

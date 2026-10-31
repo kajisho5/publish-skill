@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from helpers import (FAKE_BACKEND_NAME, REAL_DISCOVER, ROOT, OfflineTestCase, RealKeychainTouched, env, run_cli,
-                     run_cli_raw)
+                     run_cli_raw, youtube_mock)
 
 from publish_skill import auth, keychain
 from publish_skill import credentials as creds
@@ -293,12 +293,16 @@ class PrecedenceTests(KeychainTestCase):
 
     def test_upload_reads_the_keychain_only_after_the_gate(self):
         self.store()
+        m = youtube_mock(self, KC_SECRETS)                 # accepts only the keychain's values
         token = upload(self.video, "youtube")["confirm_token"]
         with env(**NO_ENV):
             rc, out, err = run_cli_raw("upload", self.video, "--platform", "youtube", "--confirm", token, "--json")
         doc = json.loads(out)
-        self.assertEqual((rc, doc["error"]["code"]), (5, "NOT_IMPLEMENTED"))    # the keychain's credentials reached the stub
+        self.assertEqual((rc, doc["uploaded"]), (0, True))       # the keychain's credentials reached the uploader
+        self.assertEqual(m.kinds()[0], "token")
         self.assert_no_secret(out + err)
+        for s in [m.access_token] + m.upload_ids:
+            self.assertNotIn(s, out + err)
 
 
 class RefusalBeforeReadTests(KeychainTestCase):
@@ -496,6 +500,7 @@ class LogoutAndStatusTests(KeychainTestCase):
 class SecretsNeverPrintedWithTheKeychainTests(KeychainTestCase):
     def test_no_command_prints_a_keychain_credential(self):
         self.store()
+        m = youtube_mock(self, KC_SECRETS)
         token = upload(self.video, "youtube")["confirm_token"]
         argvs = [("contract", "--json"), ("doctor", "--json"), ("platforms", "--json"), ("auth", "status", "--json"),
                  ("upload", self.video, "--platform", "youtube", "--json"),
@@ -509,6 +514,9 @@ class SecretsNeverPrintedWithTheKeychainTests(KeychainTestCase):
                 if "--json" in argv:
                     json.loads(out)
                 self.assert_no_secret(out + err, argv)
+                for s in [m.access_token] + m.upload_ids:
+                    self.assertNotIn(s, out + err, argv)
+        self.assertEqual(len(m.videos), 2)                 # both confirmed runs (JSON and human) uploaded
 
     def test_a_keychain_value_that_reaches_a_message_is_redacted(self):
         self.store()

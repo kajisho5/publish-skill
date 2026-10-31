@@ -1,6 +1,7 @@
 """Unit tests: contract, typed errors, platform registry, credentials (environment only, never printed), the upload
 confirmation gate, doctor, and the OS registry conformance and schema checks. Every test runs with socket connections
-patched to fail, so any attempt to reach the network is a test failure; nothing is uploaded."""
+patched to fail except to a loopback mock server the test started, so any attempt to reach the network is a test
+failure; the uploads here go to tests/mock_youtube.py on 127.0.0.1."""
 from __future__ import annotations
 
 import ast
@@ -12,14 +13,15 @@ import sys
 import unittest
 from pathlib import Path
 
-from helpers import OS_DIR, ROOT, OfflineTestCase, env, run_cli, run_cli_raw
+from helpers import (LOOPBACK_PORTS, OS_DIR, ROOT, NetworkAttempted, OfflineTestCase, env, run_cli, run_cli_raw,
+                     youtube_mock)
 
 from publish_skill import SKILL_ID, __version__
 from publish_skill import credentials as creds
 from publish_skill.contract import CAPABILITY_IDS, contract
 from publish_skill.doctor import doctor, locate_ffmpeg_skill
 from publish_skill.errors import ERROR_TABLE, EXIT_CODES, PublishError
-from publish_skill.platforms import UploadRequest, get_platform, platform_ids
+from publish_skill.platforms import Uploader, UploadRequest, get_platform, platform_ids
 from publish_skill.upload import confirm_token, sha256_file, upload
 
 YT_VARS = ("PUBLISH_YOUTUBE_CLIENT_ID", "PUBLISH_YOUTUBE_CLIENT_SECRET", "PUBLISH_YOUTUBE_REFRESH_TOKEN")
@@ -31,8 +33,18 @@ NO_SECRETS = {k: None for k in YT_VARS}
 
 class NetworkGuardTests(OfflineTestCase):
     def test_guard_is_active(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(NetworkAttempted):
             socket.create_connection(("example.com", 443))
+        for host in ("oauth2.googleapis.com", "www.googleapis.com"):
+            with self.assertRaises(NetworkAttempted):
+                socket.getaddrinfo(host, 443)
+        with self.assertRaises(NetworkAttempted):                       # loopback, but not a mock this test started
+            socket.create_connection(("127.0.0.1", 9))
+        s = socket.socket()
+        self.addCleanup(s.close)
+        with self.assertRaises(NetworkAttempted):
+            s.connect(("142.250.0.1", 443))
+        self.assertEqual(LOOPBACK_PORTS, set())
 
 
 class ErrorTests(unittest.TestCase):
@@ -41,8 +53,13 @@ class ErrorTests(unittest.TestCase):
             self.assertTrue(re.fullmatch(r"[A-Z_]+", code))
             self.assertGreaterEqual(exit_code, 2)
             self.assertIsInstance(retryable, bool)
-        self.assertEqual({c for c, (_, r) in ERROR_TABLE.items() if r}, {"CANCELLED"})
+        # step 4 (ADR-004): an exhausted quota, the channel's daily limit and an interrupted transfer can succeed later
+        self.assertEqual({c for c, (_, r) in ERROR_TABLE.items() if r},
+                         {"CANCELLED", "QUOTA_EXCEEDED", "UPLOAD_LIMIT_EXCEEDED", "UPLOAD_INTERRUPTED"})
         self.assertEqual(EXIT_CODES["NOT_IMPLEMENTED"], 5)
+        self.assertEqual({c for c, e in EXIT_CODES.items() if e == 4},
+                         {"QUOTA_EXCEEDED", "UPLOAD_LIMIT_EXCEEDED", "UPLOAD_INTERRUPTED", "UPLOAD_REJECTED", "UPLOAD_PARTIAL"})
+        self.assertEqual(EXIT_CODES["AUTH_FAILED"], 3)
 
     def test_error_document(self):
         e = PublishError("CONFIRM_MISMATCH", "no", {"platform": "youtube"})
@@ -64,9 +81,9 @@ class ContractTests(OfflineTestCase):
         for p in c["provides"]:
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
             self.assertIn(p["tool_id"], tool_ids)
-        # plan works since step 2 (ADR-002); nothing uploads yet (ADR-001)
+        # plan works since step 2 (ADR-002), the YouTube upload since step 4 (ADR-004)
         self.assertEqual({p["id"]: p["lifecycle"] for p in c["provides"]},
-                         {"publish.plan": "EXPERIMENTAL", "publish.upload": "PROPOSED"})
+                         {"publish.plan": "EXPERIMENTAL", "publish.upload": "EXPERIMENTAL"})
         for d in c["dependencies"]:
             self.assertIsInstance(d["version_range"], str)
             self.assertFalse(d["version_range"].replace(".", "").isdigit(), d)
@@ -76,7 +93,9 @@ class ContractTests(OfflineTestCase):
         c = contract()
         self.assertTrue(c["execution"]["network"])              # roadmap step 1: network: true
         self.assertEqual(c["execution"]["network_tools"], ["publish/upload"])
-        self.assertFalse(c["execution"]["network_in_this_release"])
+        self.assertTrue(c["execution"]["network_in_this_release"])
+        self.assertEqual(c["execution"]["network_code"], ["src/publish_skill/platforms/youtube.py"])
+        self.assertEqual(c["execution"]["network_hosts"], ["oauth2.googleapis.com", "www.googleapis.com"])
         self.assertFalse(c["execution"]["shell"])
         tools = {t["tool_id"]: t for t in c["tools"]}
         self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload"})
@@ -90,8 +109,8 @@ class ContractTests(OfflineTestCase):
         c = contract()
         self.assertEqual(c["errors"], {k: {"exit_code": e, "retryable": r} for k, (e, r) in ERROR_TABLE.items()})
         self.assertEqual(sorted(c["platforms"]["registered"]), platform_ids())
-        for spec in c["platforms"]["registered"].values():
-            self.assertFalse(spec["implemented"])
+        self.assertEqual({pid: spec["implemented"] for pid, spec in c["platforms"]["registered"].items()},
+                         {"youtube": True})
 
     def test_version_comes_from_pyproject(self):
         want = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
@@ -103,21 +122,49 @@ class ContractTests(OfflineTestCase):
         self.assertEqual((rc, rc2, doc["skill_id"]), (0, 0, SKILL_ID))
         self.assertEqual(doc, doc2)
 
-    def test_no_shell_and_no_network_code_in_the_scaffold(self):
-        # No uploader is implemented, so no module may contain network code yet; step 4 adds it to its uploader only.
-        # Only the ffmpeg-skill adapter may start a process (ADR-002); every other banned word stays banned there too.
-        starts_process = []
-        for f in (ROOT / "src" / "publish_skill").rglob("*.py"):
+    def test_no_shell_and_network_code_in_the_uploader_module_only(self):
+        # ADR-004 narrows ADR-001's rule for exactly one file: platforms/youtube.py may hold network code (http.client),
+        # and nothing else may. Only the ffmpeg-skill adapter may start a process (ADR-002). Every other banned word
+        # stays banned in both.
+        src = ROOT / "src" / "publish_skill"
+        network_words = ("import socket", "urllib.request", "http.client", "import requests", "urlopen", "httpx", "ssl",
+                         "HTTPConnection", "HTTPSConnection", "create_connection")
+        starts_process, has_network = [], []
+        for f in src.rglob("*.py"):
+            rel = f.relative_to(src).as_posix()
             text = f.read_text(encoding="utf-8")
-            self.assertNotIn("shell=True", text, f.name)
-            for banned in ("import socket", "urllib.request", "http.client", "import requests", "urlopen", "httpx",
-                           "subprocess", "os.system", "os.popen", "os.exec", "os.spawn"):
-                if banned == "subprocess" and f.name == "adapter.py" and f.parent.name == "publish_skill":
+            self.assertNotIn("shell=True", text, rel)
+            for banned in network_words + ("subprocess", "os.system", "os.popen", "os.exec", "os.spawn"):
+                if banned == "subprocess" and rel == "adapter.py":
                     continue
-                self.assertNotIn(banned, text, f"{f.name}: {banned}")
+                if banned in network_words and rel == "platforms/youtube.py" and banned in ("http.client", "ssl",
+                                                                                            "HTTPConnection",
+                                                                                            "HTTPSConnection"):
+                    continue
+                self.assertNotIn(banned, text, f"{rel}: {banned}")
             if "subprocess" in text:
-                starts_process.append(f.name)
+                starts_process.append(rel)
+            if "http.client" in text:
+                has_network.append(rel)
         self.assertEqual(starts_process, ["adapter.py"])
+        self.assertEqual(has_network, ["platforms/youtube.py"])
+
+    def test_the_uploader_imports_only_stdlib_http_and_opens_https_or_loopback_only(self):
+        tree = ast.parse((ROOT / "src" / "publish_skill" / "platforms" / "youtube.py").read_text(encoding="utf-8"))
+        imported = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                imported |= {a.name.split(".")[0] for a in n.names}
+            elif isinstance(n, ast.ImportFrom) and n.level == 0:
+                imported.add(n.module.split(".")[0])
+        self.assertEqual(imported, {"__future__", "hashlib", "http", "json", "random", "re", "ssl", "time", "typing", "urllib"})
+        conns = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr in ("HTTPConnection", "HTTPSConnection")]
+        self.assertEqual(sorted(c.func.attr for c in conns), ["HTTPConnection", "HTTPSConnection"])   # one site each
+        https = [c for c in conns if c.func.attr == "HTTPSConnection"][0]
+        self.assertIn("context", {k.arg for k in https.keywords})               # a verifying default SSL context
+        for c in conns:
+            self.assertIn("timeout", {k.arg for k in c.keywords})
 
     def test_the_adapter_starts_processes_from_an_argv_list_without_a_shell(self):
         tree = ast.parse((ROOT / "src" / "publish_skill" / "adapter.py").read_text(encoding="utf-8"))
@@ -137,16 +184,20 @@ class PlatformTests(OfflineTestCase):
     def test_registry(self):
         self.assertEqual(platform_ids(), ["youtube"])
         yt = get_platform("youtube")
-        self.assertEqual((yt.implemented, yt.roadmap_step), (False, 4))
+        self.assertEqual((yt.implemented, yt.roadmap_step), (True, 4))
         self.assertEqual(yt.credential_env, YT_VARS)
         with self.assertRaises(PublishError) as e:
             get_platform("tiktok")
         self.assertEqual(e.exception.code, "UNKNOWN_PLATFORM")
 
     def test_stub_uploader_raises_not_implemented(self):
-        req = UploadRequest(platform="youtube", path=self.video, size=1, sha256="0" * 64)
+        # the base class, which each further platform starts from (step 5), still opens no connection
+        class Stub(Uploader):
+            id, name, roadmap_step = "stub", "Stub", 5
+
+        req = UploadRequest(platform="stub", path=self.video, size=1, sha256="0" * 64)
         with self.assertRaises(PublishError) as e:
-            get_platform("youtube").upload(req, creds.Credentials("youtube", SECRETS))
+            Stub().upload(req, creds.Credentials("stub", SECRETS))
         self.assertEqual(e.exception.code, "NOT_IMPLEMENTED")
         self.assertFalse(e.exception.details["uploaded"])
 
@@ -240,15 +291,25 @@ class UploadGateTests(OfflineTestCase):
         self.assertEqual((rc, doc["error"]["code"]), (3, "CREDENTIALS_MISSING"))
         self.assertEqual(doc["error"]["details"]["missing"], list(YT_VARS))
 
-    def test_right_token_with_credentials_reaches_the_stub(self):
+    def test_right_token_with_credentials_uploads_to_the_mock(self):
+        m = youtube_mock(self, SECRETS)
         token = upload(self.video, "youtube")["confirm_token"]
         with env(**SECRETS):
             rc, out, err = run_cli_raw("upload", self.video, "--platform", "youtube", "--confirm", token, "--json")
         doc = json.loads(out)
-        self.assertEqual((rc, doc["error"]["code"]), (5, "NOT_IMPLEMENTED"))
-        self.assertFalse(doc["error"]["details"]["uploaded"])
-        for s in SECRETS.values():
+        self.assertEqual(rc, 0, doc)
+        self.assertEqual((doc["dry_run"], doc["uploaded"], doc["network_used"]), (False, True, True))
+        self.assertEqual(list(m.videos), [doc["result"]["video_id"]])
+        self.assertEqual(m.videos[doc["result"]["video_id"]]["data"], open(self.video, "rb").read())
+        self.assertEqual(m.videos[doc["result"]["video_id"]]["resource"], {"status": {"privacyStatus": "private"}})
+        for s in list(SECRETS.values()) + [m.access_token] + m.upload_ids:
             self.assertNotIn(s, out + err)
+
+    def test_without_the_mock_a_confirmed_upload_would_reach_google_and_the_guard_stops_it(self):
+        token = upload(self.video, "youtube")["confirm_token"]
+        with env(**SECRETS), self.assertRaises(NetworkAttempted) as e:
+            run_cli_raw("upload", self.video, "--platform", "youtube", "--confirm", token, "--json")
+        self.assertIn("oauth2.googleapis.com", str(e.exception))
 
     def test_unknown_platform_and_missing_input(self):
         rc, doc = run_cli("upload", self.video, "--platform", "myspace", "--json")
@@ -264,6 +325,7 @@ class UploadGateTests(OfflineTestCase):
         self.assertEqual(before, (sha256_file(self.video), os.path.getmtime(self.video)))
 
     def test_human_output_is_redacted_too(self):
+        youtube_mock(self, SECRETS)
         token = upload(self.video, "youtube")["confirm_token"]
         with env(**SECRETS):
             outs = [run_cli_raw(*a) for a in (("doctor",), ("platforms",), ("contract",),
@@ -276,17 +338,19 @@ class UploadGateTests(OfflineTestCase):
 
 class SecretNeverPrintedTests(OfflineTestCase):
     def test_a_one_character_credential_is_redacted_without_breaking_the_document(self):
+        youtube_mock(self, SECRETS)                     # expects SECRETS' client id, so "a" is refused: AUTH_FAILED
         token = upload(self.video, "youtube")["confirm_token"]
         with env(**dict(SECRETS, PUBLISH_YOUTUBE_CLIENT_ID="a")):
             rc, out, err = run_cli_raw("upload", self.video, "--platform", "youtube", "--confirm", token)   # human output
-            self.assertEqual(rc, 5)
-            self.assertIn("error [NOT_IMPLEMENTED]", err)
+            self.assertEqual(rc, 3)
+            self.assertIn("error [AUTH_FAILED]", err)
             rc, doc = run_cli("upload", self.video, "--platform", "youtube", "--confirm", token, "--json")
-        self.assertEqual(doc["error"]["code"], "NOT_IMPLEMENTED")
+        self.assertEqual(doc["error"]["code"], "AUTH_FAILED")
         self.assertNotIn("a", doc["error"]["message"])
 
 
     def test_no_command_prints_a_credential(self):
+        m = youtube_mock(self, SECRETS)
         token = upload(self.video, "youtube")["confirm_token"]
         argvs = [("contract", "--json"), ("skill", "--json"), ("doctor", "--json"), ("platforms", "--json"),
                  ("upload", self.video, "--platform", "youtube", "--json"),
@@ -299,26 +363,31 @@ class SecretNeverPrintedTests(OfflineTestCase):
             for argv in argvs:
                 rc, out, err = run_cli_raw(*argv)
                 json.loads(out)                                   # exactly one JSON document
-                for s in SECRETS.values():
+                for s in list(SECRETS.values()) + [m.access_token] + m.upload_ids:
                     self.assertNotIn(s, out + err, argv)
+        self.assertEqual(len(m.videos), 1)                                  # the confirmed run uploaded, once
 
 
 class DoctorTests(OfflineTestCase):
-    def test_degraded_with_nothing_implemented(self):
+    def test_degraded_without_credentials_or_ffmpeg_skill(self):
         with env(**NO_SECRETS):
             d = doctor(os.path.join(self.tmp, "no-ffmpeg-skill"))
         self.assertEqual((d["status"], d["ok"], d["ready_platforms"]), ("degraded", True, []))
         self.assertEqual(d["checks"]["ffmpeg_skill"]["status"], "MISSING")
         self.assertEqual(d["checks"]["platforms"]["youtube"]["credentials"]["variables"], {v: "absent" for v in YT_VARS})
         self.assertEqual(d["checks"]["operations"], {"plan": {"implemented": True, "roadmap_step": 2},
-                                                     "upload": {"implemented": False, "roadmap_step": 4}})
+                                                     "upload": {"implemented": True, "roadmap_step": 4}})
+        self.assertTrue(d["checks"]["platforms"]["youtube"]["implemented"])
+        self.assertFalse(d["checks"]["platforms"]["youtube"]["ready"])
         self.assertEqual(d["problems"], [])
 
-    def test_credentials_complete_but_uploader_missing_is_not_ready(self):
+    def test_credentials_complete_and_uploader_implemented_is_ready(self):
         with env(**SECRETS):
             d = doctor(os.path.join(self.tmp, "no-ffmpeg-skill"))
         self.assertTrue(d["checks"]["platforms"]["youtube"]["credentials"]["complete"])
-        self.assertFalse(d["checks"]["platforms"]["youtube"]["ready"])
+        self.assertTrue(d["checks"]["platforms"]["youtube"]["ready"])
+        self.assertEqual(d["ready_platforms"], ["youtube"])
+        self.assertEqual(d["status"], "degraded")                     # ffmpeg-skill and the keychain are still missing
         self.assertNotIn(SECRETS["PUBLISH_YOUTUBE_CLIENT_SECRET"], json.dumps(d))
 
     def test_ffmpeg_skill_located_by_marker(self):

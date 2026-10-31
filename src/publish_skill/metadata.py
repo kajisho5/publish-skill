@@ -3,7 +3,8 @@
 `publish plan` and `publish upload` take the same flags and build the same Metadata from them, so the document a
 plan checked is the document a dry run prints and the confirmation token binds. The thumbnail and the captions are
 bound by their bytes (sha256 and size), not their path, like the deliverable: replacing the image after the dry run
-needs a new token.
+needs a new token. Each caption file carries the BCP-47 language tag captions.insert requires (`--caption-language`, one
+per `--caption`, in order); the token binds it with the file's bytes (ADR-004).
 
 Privacy defaults to `private`. The YouTube API defaults to `public` when the field is left out; this skill never
 leaves it out, so a forgotten flag cannot publish a video to everyone."""
@@ -19,6 +20,15 @@ from .errors import PublishError
 
 DEFAULT_PRIVACY = "private"
 _CHUNK = 1 << 20
+_JPEG = b"\xff\xd8\xff"
+_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+def image_kind(path: str) -> str:
+    """image/png, image/jpeg or other, by the file's first bytes (plan checks it; the uploader sends it as the type)."""
+    with open(path, "rb") as fh:
+        head = fh.read(8)
+    return "image/png" if head.startswith(_PNG) else "image/jpeg" if head.startswith(_JPEG) else "other"
 
 
 def sha256_file(path: str) -> str:
@@ -43,7 +53,7 @@ class Metadata:
     tags: List[str] = field(default_factory=list)
     privacy: str = DEFAULT_PRIVACY
     thumbnail: Optional[Dict[str, Any]] = None          # file_facts()
-    captions: List[Dict[str, Any]] = field(default_factory=list)
+    captions: List[Dict[str, Any]] = field(default_factory=list)   # file_facts() + "language"
 
     def to_dict(self) -> Dict[str, Any]:
         return {"title": self.title, "description": self.description, "tags": list(self.tags), "privacy": self.privacy,
@@ -54,7 +64,7 @@ class Metadata:
         in a fixed key order. Two Metadata that would send the same thing to the platform give the same text."""
         doc = {"title": self.title, "description": self.description, "tags": list(self.tags), "privacy": self.privacy,
                "thumbnail": {"sha256": self.thumbnail["sha256"], "size": self.thumbnail["size"]} if self.thumbnail else None,
-               "captions": [{"sha256": c["sha256"], "size": c["size"]} for c in self.captions]}
+               "captions": [{"sha256": c["sha256"], "size": c["size"], "language": c.get("language")} for c in self.captions]}
         return json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -63,9 +73,15 @@ DEFAULT_METADATA = Metadata()
 
 def build(title: Optional[str] = None, description: Optional[str] = None, description_file: Optional[str] = None,
           tags: Optional[Sequence[str]] = None, privacy: Optional[str] = None, thumbnail: Optional[str] = None,
-          captions: Optional[Sequence[str]] = None) -> Metadata:
+          captions: Optional[Sequence[str]] = None, caption_languages: Optional[Sequence[str]] = None) -> Metadata:
     """Metadata from the command-line flags. Values are taken as given (an invalid privacy or an over-long title is
-    for `plan` to report, and for `upload` to refuse); only a missing file is an error here."""
+    for `plan` to report, and for `upload` to refuse); only a missing file, or a --caption-language count that does not
+    match the --caption count, is an error here."""
+    captions, caption_languages = list(captions or []), list(caption_languages or [])
+    if caption_languages and len(caption_languages) != len(captions):
+        raise PublishError("INVALID_ARGUMENT", f"give one --caption-language per --caption, in the same order "
+                           f"({len(captions)} captions, {len(caption_languages)} languages)",
+                           {"captions": len(captions), "caption_languages": len(caption_languages)})
     if description is not None and description_file is not None:
         raise PublishError("INVALID_ARGUMENT", "give --description or --description-file, not both")
     if description_file is not None:
@@ -81,4 +97,6 @@ def build(title: Optional[str] = None, description: Optional[str] = None, descri
     return Metadata(title=title, description=description, tags=[str(t) for t in (tags or [])],
                     privacy=DEFAULT_PRIVACY if privacy is None else str(privacy),
                     thumbnail=file_facts(thumbnail, "thumbnail") if thumbnail is not None else None,
-                    captions=[file_facts(c, "captions") for c in (captions or [])])
+                    captions=[dict(file_facts(c, "captions"),
+                                   language=str(caption_languages[i]) if caption_languages else None)
+                              for i, c in enumerate(captions)])

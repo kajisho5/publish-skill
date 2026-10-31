@@ -16,7 +16,9 @@ from .platforms import get_platform, platform_ids
 from .upload import TOKEN_BINDS, TOKEN_PREFIX
 
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
-                  "[--privacy private|unlisted|public]", "[--thumbnail <image>]", "[--caption <file> ...]"]
+                  "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
+                  "[--caption <file> ... --caption-language <bcp47> ...]"]
+NETWORK_MODULE = "src/publish_skill/platforms/youtube.py"
 
 CONTRACT_VERSION = "1.0"
 CAPABILITY_IDS = {"plan": "publish.plan", "upload": "publish.upload"}
@@ -29,8 +31,9 @@ _OP_TOOLS = {
              "schema": PLAN_SCHEMA, "row_statuses": list(STATUSES), "verdicts": ["PASS", "WARN", "FAIL", "INCOMPLETE"],
              "argv": ["plan", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--ffmpeg-skill <dir>]", "--json"]},
     "upload": {"role": "execution", "network": True, "writes_media": False,
-               "description": "Upload a deliverable to a platform. Dry run unless --confirm carries the token the dry run "
-                              "printed for exactly this file, metadata and platform",
+               "description": "Upload a deliverable, its thumbnail and captions to a platform (YouTube: the Data API v3 "
+                              "resumable upload). Dry run unless --confirm carries the token the dry run printed for "
+                              "exactly this file, metadata and platform; then a receipt, redacted",
                "argv": ["upload", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--confirm <token>]", "--json"]},
 }
 
@@ -40,7 +43,7 @@ def tools() -> list:
     for op, spec in _OP_TOOLS.items():
         out.append({"tool_id": f"{SKILL_ID}/{op}", "mutates_input": False, "deterministic": op == "plan",
                     "implemented": IMPLEMENTED_OPS[op], "roadmap_step": OP_STEP[op], **spec})
-    out[-1]["implemented_part"] = "the dry run and the confirmation gate; every platform uploader is a NOT_IMPLEMENTED stub"
+    out[-1]["uploaders"] = {pid: get_platform(pid).implemented for pid in platform_ids()}
     out += [
         {"tool_id": f"{SKILL_ID}/doctor", "role": "diagnostic", "network": False, "writes_media": False, "mutates_input": False,
          "deterministic": False, "implemented": True, "schema": DOCTOR_SCHEMA,
@@ -92,7 +95,9 @@ def contract() -> Dict[str, Any]:
                          "credentials from files, flags or request fields (the environment or the OS keychain only)",
                          "keyring backends other than the three OS keychains (plain files, plug-ins, network stores)",
                          "obtaining an OAuth refresh token (the consent screen needs the network; `auth login` stores one)",
-                         "uploading without --confirm"],
+                         "uploading without --confirm",
+                         "resuming an upload in a later run (an interrupted run uploads nothing; run it again)",
+                         "an HTTP(S) proxy for the upload (direct connections only in this release)"],
         "tools": tools(),
         "platforms": {"registered": {pid: get_platform(pid).spec() for pid in platform_ids()},
                       "per_platform_pr": "roadmap step 5"},
@@ -114,7 +119,17 @@ def contract() -> Dict[str, Any]:
                         "decision": "docs/decisions.md ADR-001, ADR-003"},
         "execution": {"canonical_invocation": ["publish", "<command>", "...", "--json"], "network": True,
                       "network_tools": [f"{SKILL_ID}/upload"], "network_requires": "--confirm <token>",
-                      "network_in_this_release": False, "shell": False, "input_is_read_only": True,
+                      "network_in_this_release": True, "network_code": [NETWORK_MODULE],
+                      "network_hosts": ["oauth2.googleapis.com", "www.googleapis.com"],
+                      "upload_protocol": {"youtube": {
+                          "oauth": "refresh token -> access token (https://oauth2.googleapis.com/token)",
+                          "resumable": "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
+                          "methods": ["videos.insert", "thumbnails.set", "captions.insert"],
+                          "chunk_bytes": "a multiple of 256 KiB (8 MiB)",
+                          "retries": "5xx, 429, rate-limit reasons, connection errors and timeouts: exponential backoff "
+                                     "(or Retry-After), then the session's status and a resume",
+                          "decision": "docs/decisions.md ADR-004"}},
+                      "shell": False, "input_is_read_only": True,
                       "child_processes": "adapter.py only: [python, <ffmpeg-skill>/scripts/<tool>.py, ...] as an argv list "
                                     "(tools: _contract, export --list, check), never a shell; ffmpeg-skill declares no "
                                     "network use"},

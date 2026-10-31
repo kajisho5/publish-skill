@@ -16,6 +16,13 @@ ERROR_TABLE: Dict[str, Tuple[int, bool]] = {
     "CREDENTIALS_MISSING": (3, False),    # a credential the platform needs is in neither the environment nor the keychain
     "KEYCHAIN_UNAVAILABLE": (3, False),   # `auth login/logout`: no usable OS keychain (keyring not installed, none viable, or off)
     "KEYCHAIN_ERROR": (3, False),         # the OS keychain refused to read, store or remove an item (e.g. locked)
+    "AUTH_FAILED": (3, False),            # the platform refused the credentials (e.g. invalid_grant) or they lack a scope
+    # step 4 (ADR-004): the upload itself. Exit 4: the platform refused, or the transfer could not finish.
+    "QUOTA_EXCEEDED": (4, True),          # the API project's quota is used up (quotaExceeded); retry after it resets
+    "UPLOAD_LIMIT_EXCEEDED": (4, True),   # the channel's daily upload limit is reached (uploadLimitExceeded); retry later
+    "UPLOAD_INTERRUPTED": (4, True),      # 5xx / 429 / connection errors / timeouts outlasted every retry; nothing was published
+    "UPLOAD_REJECTED": (4, False),        # the platform refused the request permanently (another 4xx, or a protocol error)
+    "UPLOAD_PARTIAL": (4, False),         # the video was uploaded but its thumbnail or captions were not; do not re-run upload
     "NOT_IMPLEMENTED": (5, False),        # declared in the contract, not implemented yet (see the roadmap step)
     "CANCELLED": (6, True),               # interrupted by a signal
     "INTERNAL_ERROR": (7, False),         # a bug in this skill
