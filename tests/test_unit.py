@@ -1,7 +1,7 @@
 """Unit tests: contract, typed errors, platform registry, credentials (environment only, never printed), the upload
 confirmation gate, doctor, and the OS registry conformance and schema checks. Every test runs with socket connections
 patched to fail except to a loopback mock server the test started, so any attempt to reach the network is a test
-failure; the uploads here go to tests/mock_youtube.py on 127.0.0.1."""
+failure; the uploads here go to tests/mock_youtube.py (and tests/test_vimeo.py's to tests/mock_vimeo.py) on 127.0.0.1."""
 from __future__ import annotations
 
 import ast
@@ -29,13 +29,15 @@ SECRETS = {"PUBLISH_YOUTUBE_CLIENT_ID": "cid-7f3a91e2.apps.example",
            "PUBLISH_YOUTUBE_CLIENT_SECRET": "csecret-Zq81LmP0sW",
            "PUBLISH_YOUTUBE_REFRESH_TOKEN": "1//refresh-XyZ0987654321"}
 NO_SECRETS = {k: None for k in YT_VARS}
+# the only files with network code: one module per implemented uploader (ADR-004, ADR-005)
+NETWORK_MODULES = ("platforms/vimeo.py", "platforms/youtube.py")
 
 
 class NetworkGuardTests(OfflineTestCase):
     def test_guard_is_active(self):
         with self.assertRaises(NetworkAttempted):
             socket.create_connection(("example.com", 443))
-        for host in ("oauth2.googleapis.com", "www.googleapis.com"):
+        for host in ("oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com", "files.tus.vimeo.com"):
             with self.assertRaises(NetworkAttempted):
                 socket.getaddrinfo(host, 443)
         with self.assertRaises(NetworkAttempted):                       # loopback, but not a mock this test started
@@ -94,8 +96,12 @@ class ContractTests(OfflineTestCase):
         self.assertTrue(c["execution"]["network"])              # roadmap step 1: network: true
         self.assertEqual(c["execution"]["network_tools"], ["publish/upload"])
         self.assertTrue(c["execution"]["network_in_this_release"])
-        self.assertEqual(c["execution"]["network_code"], ["src/publish_skill/platforms/youtube.py"])
-        self.assertEqual(c["execution"]["network_hosts"], ["oauth2.googleapis.com", "www.googleapis.com"])
+        self.assertEqual(c["execution"]["network_code"], ["src/publish_skill/platforms/vimeo.py",
+                                                          "src/publish_skill/platforms/youtube.py"])
+        self.assertEqual(c["execution"]["network_hosts"][:3], ["oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com"])
+        self.assertEqual(len(c["execution"]["network_hosts"]), 4)
+        self.assertTrue(c["execution"]["network_hosts"][3].startswith("*.vimeo.com"))
+        self.assertEqual(sorted(c["execution"]["upload_protocol"]), ["vimeo", "youtube"])
         self.assertFalse(c["execution"]["shell"])
         tools = {t["tool_id"]: t for t in c["tools"]}
         self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload"})
@@ -110,7 +116,7 @@ class ContractTests(OfflineTestCase):
         self.assertEqual(c["errors"], {k: {"exit_code": e, "retryable": r} for k, (e, r) in ERROR_TABLE.items()})
         self.assertEqual(sorted(c["platforms"]["registered"]), platform_ids())
         self.assertEqual({pid: spec["implemented"] for pid, spec in c["platforms"]["registered"].items()},
-                         {"youtube": True})
+                         {"vimeo": True, "youtube": True})
 
     def test_version_comes_from_pyproject(self):
         want = re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
@@ -123,9 +129,9 @@ class ContractTests(OfflineTestCase):
         self.assertEqual(doc, doc2)
 
     def test_no_shell_and_network_code_in_the_uploader_module_only(self):
-        # ADR-004 narrows ADR-001's rule for exactly one file: platforms/youtube.py may hold network code (http.client),
-        # and nothing else may. Only the ffmpeg-skill adapter may start a process (ADR-002). Every other banned word
-        # stays banned in both.
+        # ADR-004 narrows ADR-001's rule for exactly one file per implemented uploader: platforms/youtube.py and
+        # (ADR-005) platforms/vimeo.py may hold network code (http.client), and nothing else may. Only the ffmpeg-skill
+        # adapter may start a process (ADR-002). Every other banned word stays banned in all of them.
         src = ROOT / "src" / "publish_skill"
         network_words = ("import socket", "urllib.request", "http.client", "import requests", "urlopen", "httpx", "ssl",
                          "HTTPConnection", "HTTPSConnection", "create_connection")
@@ -137,7 +143,7 @@ class ContractTests(OfflineTestCase):
             for banned in network_words + ("subprocess", "os.system", "os.popen", "os.exec", "os.spawn"):
                 if banned == "subprocess" and rel == "adapter.py":
                     continue
-                if banned in network_words and rel == "platforms/youtube.py" and banned in ("http.client", "ssl",
+                if banned in network_words and rel in NETWORK_MODULES and banned in ("http.client", "ssl",
                                                                                             "HTTPConnection",
                                                                                             "HTTPSConnection"):
                     continue
@@ -147,24 +153,32 @@ class ContractTests(OfflineTestCase):
             if "http.client" in text:
                 has_network.append(rel)
         self.assertEqual(starts_process, ["adapter.py"])
-        self.assertEqual(has_network, ["platforms/youtube.py"])
+        self.assertEqual(sorted(has_network), sorted(NETWORK_MODULES))
+        self.assertEqual(sorted("src/publish_skill/" + m for m in NETWORK_MODULES), contract()["execution"]["network_code"])
 
     def test_the_uploader_imports_only_stdlib_http_and_opens_https_or_loopback_only(self):
-        tree = ast.parse((ROOT / "src" / "publish_skill" / "platforms" / "youtube.py").read_text(encoding="utf-8"))
-        imported = set()
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Import):
-                imported |= {a.name.split(".")[0] for a in n.names}
-            elif isinstance(n, ast.ImportFrom) and n.level == 0:
-                imported.add(n.module.split(".")[0])
-        self.assertEqual(imported, {"__future__", "hashlib", "http", "json", "random", "re", "ssl", "time", "typing", "urllib"})
-        conns = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                 and n.func.attr in ("HTTPConnection", "HTTPSConnection")]
-        self.assertEqual(sorted(c.func.attr for c in conns), ["HTTPConnection", "HTTPSConnection"])   # one site each
-        https = [c for c in conns if c.func.attr == "HTTPSConnection"][0]
-        self.assertIn("context", {k.arg for k in https.keywords})               # a verifying default SSL context
-        for c in conns:
-            self.assertIn("timeout", {k.arg for k in c.keywords})
+        allowed = {"platforms/youtube.py": {"__future__", "hashlib", "http", "json", "random", "re", "ssl", "time",
+                                            "typing", "urllib"},
+                   "platforms/vimeo.py": {"__future__", "hashlib", "http", "json", "random", "ssl", "time", "typing",
+                                          "urllib"}}
+        self.assertEqual(sorted(allowed), sorted(NETWORK_MODULES))
+        for rel, want in allowed.items():
+            tree = ast.parse((ROOT / "src" / "publish_skill" / rel).read_text(encoding="utf-8"))
+            imported = set()
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Import):
+                    imported |= {a.name.split(".")[0] for a in n.names}
+                elif isinstance(n, ast.ImportFrom) and n.level == 0:
+                    imported.add(n.module.split(".")[0])
+            self.assertEqual(imported, want, rel)
+            conns = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                     and n.func.attr in ("HTTPConnection", "HTTPSConnection")]
+            self.assertEqual(sorted(c.func.attr for c in conns), ["HTTPConnection", "HTTPSConnection"], rel)  # one site each
+            https = [c for c in conns if c.func.attr == "HTTPSConnection"][0]
+            ctx = {k.arg: k.value for k in https.keywords}["context"]                # a verifying default SSL context
+            self.assertEqual(ast.unparse(ctx), "ssl.create_default_context()", rel)
+            for c in conns:
+                self.assertIn("timeout", {k.arg for k in c.keywords}, rel)
 
     def test_the_adapter_starts_processes_from_an_argv_list_without_a_shell(self):
         tree = ast.parse((ROOT / "src" / "publish_skill" / "adapter.py").read_text(encoding="utf-8"))
@@ -182,7 +196,10 @@ class ContractTests(OfflineTestCase):
 
 class PlatformTests(OfflineTestCase):
     def test_registry(self):
-        self.assertEqual(platform_ids(), ["youtube"])
+        self.assertEqual(platform_ids(), ["vimeo", "youtube"])
+        vm = get_platform("vimeo")
+        self.assertEqual((vm.implemented, vm.roadmap_step, vm.credential_env), (True, 5, ("PUBLISH_VIMEO_ACCESS_TOKEN",)))
+        self.assertEqual(vm.metadata_fields, ("title", "description", "privacy"))
         yt = get_platform("youtube")
         self.assertEqual((yt.implemented, yt.roadmap_step), (True, 4))
         self.assertEqual(yt.credential_env, YT_VARS)

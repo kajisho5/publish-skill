@@ -1,6 +1,6 @@
 ---
 name: publish-skill
-description: Upload a finished, QC-passed deliverable to a delivery platform (YouTube first), and check it and its title, description, tags, privacy, thumbnail and captions against the platform's upload limits offline first. Use when asked to publish, upload or post a finished video to a platform, to check whether a video and its metadata will be accepted, or to check whether publishing is set up. Dry run by default; an upload needs the confirmation token the dry run printed for exactly that file, metadata and platform, and a human's approval. Credentials come from environment variables or the OS keychain (`publish auth login`) and are never printed. YouTube uploads use the Data API v3 resumable upload and resume interrupted chunks.
+description: Upload a finished, QC-passed deliverable to a delivery platform (YouTube or Vimeo), and check it and its title, description, tags, privacy, thumbnail and captions against the platform's upload limits offline first. Use when asked to publish, upload or post a finished video to a platform, to check whether a video and its metadata will be accepted, or to check whether publishing is set up. Dry run by default; an upload needs the confirmation token the dry run printed for exactly that file, metadata and platform, and a human's approval. Credentials come from environment variables or the OS keychain (`publish auth login`) and are never printed. YouTube uploads use the Data API v3 resumable upload and Vimeo uploads the tus resumable upload; both resume interrupted chunks.
 ---
 
 # publish-skill
@@ -17,6 +17,7 @@ Run `publish <command> ... --json` (installed by `pip install -e .`). Every comm
 | Check the file and its metadata against the platform's limits (offline) | `publish plan final.mp4 --platform youtube --title "..." --privacy unlisted --thumbnail thumb.jpg --json` |
 | What would be uploaded (dry run, no network) | `publish upload final.mp4 --platform youtube --title "..." --privacy unlisted --thumbnail thumb.jpg --json` |
 | Upload, after QC and a human's approval | the same command plus `--confirm <confirm_token from the dry run>` |
+| The same for Vimeo (title, description, privacy only) | `--platform vimeo` on `plan` and `upload` |
 | What this skill declares | `publish contract --json` |
 
 Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or `--description-file`, `--tag` (repeat), `--privacy private|unlisted|public` (default `private`), `--thumbnail`, `--caption` (repeat) with `--caption-language` (its BCP-47 tag, e.g. `en`, one per `--caption`, in order).
@@ -26,17 +27,20 @@ Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or 
 - **Publishing is outward-facing and cannot be undone.** Upload only a deliverable that has passed QC (qc-skill), and only after a human has approved this upload of this file to this platform. Never add `--confirm` on your own initiative.
 - **Plan first.** Run `publish plan` with the metadata you intend to send. Fix every `FAIL` row (each has a `fix`; rows owned by `ffmpeg-skill` are fixed with ffmpeg-skill) and show the human the `WARN` rows. `INCOMPLETE` means some rows could not be checked (usually ffmpeg-skill is missing): say so; it is not a pass.
 - **Dry run next, every time.** Run `upload` with the same metadata flags and without `--confirm`, show the human the `input` (path, size, sha256), the `metadata`, the platform and the `credentials` status, and pass on `confirm_token` only after they approve. A token from an earlier dry run does not work for a re-exported file, another platform or edited metadata (`CONFIRM_MISMATCH`); run the dry run again.
-- **Credentials.** They are read from the environment or the OS keychain (YouTube: `PUBLISH_YOUTUBE_CLIENT_ID`, `PUBLISH_YOUTUBE_CLIENT_SECRET`, `PUBLISH_YOUTUBE_REFRESH_TOKEN`). If any of a platform's variables is set in the environment, the keychain is not consulted for that platform. Never ask the user to paste a secret into the chat, never put one on a command line, and never print or log one. Reports say `present` / `absent`.
+- **Credentials.** They are read from the environment or the OS keychain (YouTube: `PUBLISH_YOUTUBE_CLIENT_ID`, `PUBLISH_YOUTUBE_CLIENT_SECRET`, `PUBLISH_YOUTUBE_REFRESH_TOKEN`; Vimeo: `PUBLISH_VIMEO_ACCESS_TOKEN`, a personal access token with the `upload` scope). If any of a platform's variables is set in the environment, the keychain is not consulted for that platform. Never ask the user to paste a secret into the chat, never put one on a command line, and never print or log one. Reports say `present` / `absent`.
 - **`publish auth login` is for the user to run in their own terminal**: it reads the values from a hidden prompt (or stdin, one per line). Do not pipe a secret into it yourself. The keychain needs `pip install 'publish-skill[keychain]'`; without it, `doctor` reports the keychain as unavailable and credentials come from the environment only.
+
+- **Vimeo sends the title, description and privacy only.** `--tag`, `--thumbnail` and `--caption` are refused for Vimeo (`METADATA_INVALID`); leave them off and say they must be added on Vimeo. `private` is Vimeo's `nobody` (only the owner). `plan --platform vimeo` is always `INCOMPLETE`, because ffmpeg-skill has no Vimeo delivery spec: say so; it is not a pass.
 
 ## Report it honestly
 
 - A dry run is not an upload: say "nothing was uploaded" when `dry_run` is true. Neither is a plan.
-- An upload succeeded only when `uploaded` is true: report `result.video_id`, `result.url` and `result.privacy`, any `result.warnings`, and that YouTube is still processing it.
+- An upload succeeded only when `uploaded` is true: report `result.video_id`, `result.url` and `result.privacy`, any `result.warnings`, and that the platform is still processing it.
+- Vimeo, `UPLOAD_INTERRUPTED` / `UPLOAD_REJECTED` / `CONFIRM_MISMATCH` after the video was created: nothing was completed, but Vimeo keeps an empty placeholder (`details.video_uri`); say so. `UPLOAD_LIMIT_EXCEEDED` on Vimeo is the account's weekly or daily quota (error 4102 / 4104); `UPLOAD_REJECTED` with error 4101 is full storage.
 - `UPLOAD_PARTIAL` (exit 4): the video **is** uploaded (`details.url`) but its thumbnail or captions are not. Say so; never run `upload` again (it would upload the video twice); the rest is added in YouTube Studio.
 - `UPLOAD_INTERRUPTED`, `QUOTA_EXCEEDED`, `UPLOAD_LIMIT_EXCEEDED` (exit 4, retryable): nothing was published. Report the reason; retry only with the human's go-ahead (a new dry run is not needed for the same file and metadata), and not before the quota or daily limit resets.
 - `UPLOAD_REJECTED` (exit 4): YouTube refused the request (`details.reasons`); nothing was published.
-- `AUTH_FAILED` (exit 3): the refresh token was refused or lacks a scope (`details`); the user stores a new one with `publish auth login --platform youtube`.
+- `AUTH_FAILED` (exit 3): the refresh token (YouTube) or the access token (Vimeo) was refused or lacks a scope (`details`); the user stores a new one with `publish auth login --platform <id>`.
 - `plan` verdict `FAIL` / `INCOMPLETE` (exit 1): report the failing or unchecked rows with their `fix`; do not upload.
 - `METADATA_INVALID` (exit 2): the metadata breaks a limit; run `plan` to see which and how to fix it.
 - `NOT_IMPLEMENTED` (exit 5): the platform's uploader does not exist yet (each further platform is roadmap step 5). Say so; do not upload some other way.

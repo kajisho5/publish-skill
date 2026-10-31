@@ -6,10 +6,10 @@ deliverable's bytes and the metadata (title, description, tags, privacy, and the
 confirmation given after one dry run cannot upload a different file, the same file to another platform, or the same
 file with edited metadata. Only the exact token goes through; then the credentials are read, from the environment or
 the OS keychain (ADR-003), and the platform's uploader runs with exactly the request the token bound (YouTube: the
-resumable upload in platforms/youtube.py, ADR-004).
+resumable upload in platforms/youtube.py, ADR-004; Vimeo: the tus upload in platforms/vimeo.py, ADR-005).
 
 The receipt of an upload, and the error of a failed one, pass through credentials.redact here, before they reach the
-CLI (which redacts again): no credential, access token or session URI is in either.
+CLI (which redacts again): no credential, access token, session URI or upload link is in either.
 
 Metadata that breaks one of the platform's upload limits (limits.py) is refused as METADATA_INVALID before a token is
 printed or checked: `publish plan` shows every row and its fix.
@@ -77,7 +77,7 @@ def upload(path: str, platform_id: str, confirm: Optional[str] = None, metadata:
     request = UploadRequest(platform=platform_id, path=item["path"], size=item["size"], sha256=item["sha256"],
                             metadata=md.to_dict(), confirm_token=token)
     try:
-        result = uploader.upload(request, secrets)           # the only network use in the package (ADR-004)
+        result = uploader.upload(request, secrets)           # the only network use in the package (ADR-004, ADR-005)
     except PublishError as e:
         raise PublishError(e.code, creds.redact(e.message), creds.redact(e.details), e.retryable) from None
     return creds.redact(dict(base, ok=True, dry_run=False, uploaded=True, network_used=True, confirm_token=token,

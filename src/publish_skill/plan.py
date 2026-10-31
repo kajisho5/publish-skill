@@ -77,9 +77,35 @@ def _forbidden(text: str, chars: Optional[List[str]]) -> List[str]:
     return sorted({c for c in (chars or []) if c in text})
 
 
+_FIELD_FLAGS = {"title": "--title", "description": "--description", "tags": "--tag", "thumbnail": "--thumbnail",
+                "captions": "--caption"}
+
+
+def unsupported_fields(platform_id: str, md: Metadata) -> List[str]:
+    """The metadata fields that are set but that the platform's uploader does not send (Uploader.metadata_fields)."""
+    sent = get_platform(platform_id).metadata_fields
+    present = {"title": md.title is not None, "description": md.description is not None, "tags": bool(md.tags),
+               "thumbnail": md.thumbnail is not None, "captions": bool(md.captions)}
+    return [f for f in ("title", "description", "tags", "thumbnail", "captions") if present[f] and f not in sent]
+
+
 def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
-    """The metadata rows. Pure: no file is read except the thumbnail's first bytes and caption files' encoding."""
+    """The metadata rows. Pure: no file is read except the thumbnail's first bytes and caption files' encoding.
+    A field the platform's uploader does not send is one FAIL row, so `upload` refuses it (METADATA_INVALID) instead of
+    dropping part of what the token bound (ADR-005); its other rows are skipped."""
     rows: List[Dict[str, Any]] = []
+    platform = get_platform(platform_id)
+    unsupported = unsupported_fields(platform_id, md)
+    for f in unsupported:
+        rows.append(_row(f"{f} (not sent to {platform.name})", "FAIL", f, list(platform.metadata_fields), platform_id, None,
+                         f"drop {_FIELD_FLAGS[f]}: the {platform.name} uploader sends "
+                         f"{', '.join(platform.metadata_fields)} only; add it on {platform.name} after the upload"))
+    if unsupported:
+        md = Metadata(title=None if "title" in unsupported else md.title,
+                      description=None if "description" in unsupported else md.description,
+                      tags=[] if "tags" in unsupported else md.tags, privacy=md.privacy,
+                      thumbnail=None if "thumbnail" in unsupported else md.thumbnail,
+                      captions=[] if "captions" in unsupported else md.captions)
     max_title = L.value(platform_id, "title.max_chars")
     if md.title is None or not md.title.strip():
         rows.append(_row("title", "WARN", md.title, max_title, platform_id, "title.max_chars",
@@ -89,19 +115,26 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
         rows.append(_row("title length", "PASS" if max_title is None or n <= max_title else "FAIL", n, max_title,
                          platform_id, "title.max_chars",
                          "" if max_title is None or n <= max_title else f"shorten the title to {max_title} characters"))
-        bad = _forbidden(md.title, L.value(platform_id, "title.forbidden_chars"))
-        rows.append(_row("title characters", "FAIL" if bad else "PASS", bad, L.value(platform_id, "title.forbidden_chars"),
-                         platform_id, "title.forbidden_chars", f"remove {' '.join(bad)} from the title" if bad else ""))
+        if L.value(platform_id, "title.forbidden_chars") is not None:      # unknown: nothing is checked (Vimeo)
+            bad = _forbidden(md.title, L.value(platform_id, "title.forbidden_chars"))
+            rows.append(_row("title characters", "FAIL" if bad else "PASS", bad,
+                             L.value(platform_id, "title.forbidden_chars"), platform_id, "title.forbidden_chars",
+                             f"remove {' '.join(bad)} from the title" if bad else ""))
     if md.description is not None:
-        max_desc = L.value(platform_id, "description.max_bytes")
-        n = len(md.description.encode("utf-8"))
+        # YouTube states the limit in UTF-8 bytes, Vimeo in characters: each platform's table has one of the two keys
+        by_chars = L.value(platform_id, "description.max_chars") is not None
+        key = "description.max_chars" if by_chars else "description.max_bytes"
+        max_desc = L.value(platform_id, key)
+        n = len(md.description) if by_chars else len(md.description.encode("utf-8"))
+        unit = "characters" if by_chars else "UTF-8 bytes"
         rows.append(_row("description length", "PASS" if max_desc is None or n <= max_desc else "FAIL", n, max_desc,
-                         platform_id, "description.max_bytes",
-                         "" if max_desc is None or n <= max_desc else f"shorten the description to {max_desc} UTF-8 bytes"))
-        bad = _forbidden(md.description, L.value(platform_id, "description.forbidden_chars"))
-        rows.append(_row("description characters", "FAIL" if bad else "PASS", bad,
-                         L.value(platform_id, "description.forbidden_chars"), platform_id, "description.forbidden_chars",
-                         f"remove {' '.join(bad)} from the description" if bad else ""))
+                         platform_id, key,
+                         "" if max_desc is None or n <= max_desc else f"shorten the description to {max_desc} {unit}"))
+        if L.value(platform_id, "description.forbidden_chars") is not None:
+            bad = _forbidden(md.description, L.value(platform_id, "description.forbidden_chars"))
+            rows.append(_row("description characters", "FAIL" if bad else "PASS", bad,
+                             L.value(platform_id, "description.forbidden_chars"), platform_id,
+                             "description.forbidden_chars", f"remove {' '.join(bad)} from the description" if bad else ""))
     if md.tags:
         max_tags = L.value(platform_id, "tags.max_chars")
         n = L.tags_length(md.tags)
@@ -157,6 +190,13 @@ def delivery_checks(platform_id: str, path: str, ffmpeg_skill_dir: Optional[str]
     """ffmpeg-skill's rows for this deliverable, and the duration it measured. Never raises for ffmpeg-skill trouble:
     the reason becomes an UNCHECKED row."""
     check_platform = get_platform(platform_id).ffmpeg_skill_platform
+    if not check_platform:                      # ffmpeg-skill has no delivery spec for this platform (ADR-005)
+        why = f"ffmpeg-skill has no {platform_id} delivery spec (`check --platform`); ffmpeg-skill owns it"
+        return {"info": {"status": "NO_SPEC", "check_platform": None, "reason": why},
+                "rows": [_row("delivery spec", "UNCHECKED", None, None, platform_id, None,
+                              why + "; check the file against the platform's own guidance by hand", owner="ffmpeg-skill")],
+                "duration": None, "why": "ffmpeg-skill measures the duration with `check --platform`, which has no "
+                                         f"{platform_id} spec"}
     located = locate_ffmpeg_skill(ffmpeg_skill_dir)
     info: Dict[str, Any] = {"status": located["status"], "check_platform": check_platform}
     if located["status"] != "OK":
