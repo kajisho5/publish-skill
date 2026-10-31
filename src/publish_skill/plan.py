@@ -55,7 +55,10 @@ def file_checks(platform_id: str, path: str, size: int) -> List[Dict[str, Any]]:
     if formats:
         ext = os.path.splitext(path)[1].lower()
         ok = ext in formats
-        rows.append(_row("file format", "PASS" if ok else "WARN", ext or "(no extension)", formats, platform_id,
+        # WARN on YouTube (the bytes decide); FAIL where the table marks the list enforced (TikTok: the upload's
+        # Content-Type must name one of them, ADR-006)
+        bad = "FAIL" if L.limits_of(platform_id)["video.file_formats"].get("enforced") else "WARN"
+        rows.append(_row("file format", "PASS" if ok else bad, ext or "(no extension)", formats, platform_id,
                          "video.file_formats", "" if ok else "re-export to .mp4: ffmpeg-skill export --preset <platform>"))
     return rows
 
@@ -106,15 +109,19 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
                       tags=[] if "tags" in unsupported else md.tags, privacy=md.privacy,
                       thumbnail=None if "thumbnail" in unsupported else md.thumbnail,
                       captions=[] if "captions" in unsupported else md.captions)
-    max_title = L.value(platform_id, "title.max_chars")
+    # YouTube and Vimeo count characters, TikTok UTF-16 code units ("runes"): each table has one of the two keys
+    by_utf16 = L.value(platform_id, "title.max_utf16_units") is not None
+    title_key = "title.max_utf16_units" if by_utf16 else "title.max_chars"
+    max_title = L.value(platform_id, title_key)
     if md.title is None or not md.title.strip():
-        rows.append(_row("title", "WARN", md.title, max_title, platform_id, "title.max_chars",
+        rows.append(_row("title", "WARN", md.title, max_title, platform_id, title_key,
                          "set --title (the platform names the video otherwise)"))
     else:
-        n = len(md.title)
+        n = len(md.title.encode("utf-16-le")) // 2 if by_utf16 else len(md.title)
+        unit = "UTF-16 code units" if by_utf16 else "characters"
         rows.append(_row("title length", "PASS" if max_title is None or n <= max_title else "FAIL", n, max_title,
-                         platform_id, "title.max_chars",
-                         "" if max_title is None or n <= max_title else f"shorten the title to {max_title} characters"))
+                         platform_id, title_key,
+                         "" if max_title is None or n <= max_title else f"shorten the title to {max_title} {unit}"))
         if L.value(platform_id, "title.forbidden_chars") is not None:      # unknown: nothing is checked (Vimeo)
             bad = _forbidden(md.title, L.value(platform_id, "title.forbidden_chars"))
             rows.append(_row("title characters", "FAIL" if bad else "PASS", bad,

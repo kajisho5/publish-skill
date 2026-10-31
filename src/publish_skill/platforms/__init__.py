@@ -6,10 +6,12 @@ from typing import Dict, List, Type
 
 from ..errors import PublishError
 from .base import Uploader, UploadRequest
+from .tiktok import TikTokUploader
 from .vimeo import VimeoUploader
 from .youtube import YouTubeUploader
 
-_REGISTRY: Dict[str, Type[Uploader]] = {YouTubeUploader.id: YouTubeUploader, VimeoUploader.id: VimeoUploader}
+_REGISTRY: Dict[str, Type[Uploader]] = {YouTubeUploader.id: YouTubeUploader, VimeoUploader.id: VimeoUploader,
+                                        TikTokUploader.id: TikTokUploader}
 
 __all__ = ["Uploader", "UploadRequest", "get_platform", "platform_ids"]
 
