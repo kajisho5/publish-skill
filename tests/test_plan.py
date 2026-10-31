@@ -33,7 +33,7 @@ SECRETS = {"PUBLISH_YOUTUBE_CLIENT_ID": "cid-7f3a91e2.apps.example",
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
 GIF = b"GIF89a" + b"\x00" * 32
-OFFICIAL = ("https://developers.google.com/youtube/", "https://support.google.com/youtube/")
+OFFICIAL = ("https://developers.google.com/youtube/", "https://support.google.com/youtube/", "https://developer.vimeo.com/")
 
 # A minimal ffmpeg-skill contract with what the adapter needs (`export --list`, `check --platform ... --json
 # --no-loudness`, execution.network false). Tests edit a copy to make it unsupported.
@@ -128,10 +128,13 @@ class LimitsTableTests(unittest.TestCase):
 
     def test_readme_table_lists_every_checked_limit_with_its_source(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        for key, e in L.limits_of("youtube").items():
-            self.assertIn(f"`{key}`", readme, key)
-            if e["status"] == "documented":
-                self.assertIn(e["source"], readme, key)
+        for pid in ("youtube", "vimeo"):
+            heading = f"### Upload limits: {'YouTube' if pid == 'youtube' else 'Vimeo'}\n"
+            section = re.split(r"\n#{2,3} ", readme.split(heading, 1)[1], maxsplit=1)[0]      # up to the next heading
+            for key, e in L.limits_of(pid).items():
+                self.assertIn(f"`{key}`", section, (pid, key))
+                if e["status"] == "documented":
+                    self.assertIn(e["source"], section, (pid, key))
 
     def test_every_registered_platform_has_a_table(self):
         from publish_skill.platforms import platform_ids

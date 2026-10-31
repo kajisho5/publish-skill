@@ -33,7 +33,7 @@ jobs:
         run: |
           if [ "${{ matrix.extra }}" = keychain ]; then python -m pip install -e ".[keychain]" pyflakes; else python -m pip install -e . pyflakes; fi
       - run: python -m pyflakes src tests
-      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mock (ADR-004)
+      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mocks (ADR-004, ADR-005)
         shell: bash
         run: |
           set -o pipefail
@@ -42,6 +42,9 @@ jobs:
           grep -E "^test_the_guard_allows_only_the_mock_this_test_started .* \.\.\. ok" test.log
           grep -E "^test_resume_after_an_interrupted_chunk .* \.\.\. ok" test.log
           grep -E "^test_quota_exceeded_is_typed_and_not_retried .* \.\.\. ok" test.log
+          grep -E "^test_the_guard_blocks_every_non_loopback_host_for_vimeo .* \.\.\. ok" test.log
+          grep -E "^test_vimeo_resume_after_an_interrupted_chunk .* \.\.\. ok" test.log
+          grep -E "^test_vimeo_quota_is_typed_and_not_retried .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no credentials, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash
@@ -49,8 +52,8 @@ jobs:
           # with the extra installed, the command-line steps never read the runner's real keychain
           PUBLISH_KEYCHAIN: ${{ matrix.extra == 'keychain' && 'off' || '' }}
         run: publish doctor --json --ffmpeg-skill "$RUNNER_TEMP/none" | tee doctor.json
-      - name: doctor reports youtube as implemented and, without credentials, not ready
-        run: python -c "import json; d=json.load(open('doctor.json')); y=d['checks']['platforms']['youtube']; assert d['status']=='degraded' and y['implemented'] and not y['ready'], d"
+      - name: doctor reports youtube and vimeo as implemented and, without credentials, not ready
+        run: python -c "import json; d=json.load(open('doctor.json')); p=d['checks']['platforms']; assert d['status']=='degraded' and all(p[k]['implemented'] and not p[k]['ready'] for k in ('youtube', 'vimeo')), d"
       - name: doctor reports the keychain fallback (env only; without the extra, because keyring is not installed)
         shell: bash
         run: |
@@ -62,6 +65,8 @@ jobs:
         run: |
           publish upload README.md --platform youtube --json | tee dry.json
           python -c "import json; d=json.load(open('dry.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
+          publish upload README.md --platform vimeo --json | tee dry-vimeo.json
+          python -c "import json; d=json.load(open('dry-vimeo.json')); assert d['dry_run'] and not d['uploaded'] and not d['network_used'], d"
       - name: plan gives a structured FAIL on an over-long title, offline (no ffmpeg-skill here -> its rows UNCHECKED)
         shell: bash
         run: |
@@ -94,7 +99,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e ".[keychain]" jsonschema
-      - name: All tests run, none skipped, the fake keychain is what runs (ADR-003), uploads reach only the loopback mock (ADR-004)
+      - name: All tests run, none skipped, the fake keychain is what runs (ADR-003), uploads reach only the loopback mocks (ADR-004, ADR-005)
         env:
           AI_VIDEO_PRODUCTION_OS_DIR: ${{ github.workspace }}/vendor/AI-video-production-OS
           PUBLISH_FFMPEG_SKILL_DIR: ${{ github.workspace }}/vendor/ffmpeg-skill
@@ -105,3 +110,4 @@ jobs:
           ! grep -E "\.\.\. skipped" test.log
           grep -E "^test_the_fake_keychain_is_what_runs .* \.\.\. ok" test.log
           grep -E "^test_the_guard_allows_only_the_mock_this_test_started .* \.\.\. ok" test.log
+          grep -E "^test_the_guard_blocks_every_non_loopback_host_for_vimeo .* \.\.\. ok" test.log

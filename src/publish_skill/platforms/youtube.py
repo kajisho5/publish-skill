@@ -1,7 +1,8 @@
 """YouTube uploader (roadmap step 4, ADR-004): the YouTube Data API v3 resumable upload protocol, for the video
 (videos.insert), the thumbnail (thumbnails.set) and the captions (captions.insert) the confirmation token bound.
 
-This is the only module in the package with network code (ADR-001's source rule exempts exactly this file). It runs
+This module and platforms/vimeo.py (ADR-005) are the only modules in the package with network code (ADR-001's source
+rule exempts exactly these files). It runs
 only from upload.py's gate, after the exact --confirm token matched and the credentials were read, so every refusal
 has already happened when the first byte leaves the machine. It uses the standard library only: http.client, because
 the resumable protocol answers an incomplete upload with 308 and a Range header, which urllib's redirect handling

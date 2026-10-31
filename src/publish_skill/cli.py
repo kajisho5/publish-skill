@@ -19,8 +19,8 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
   publish upload FILE --platform ID [METADATA] --json
                                                    dry run: what would be uploaded, and the confirmation token
   publish upload FILE --platform ID [METADATA] --confirm TOKEN --json
-                                                   the upload itself, after QC and a human's approval (YouTube:
-                                                   resumable upload; prints a receipt)
+                                                   the upload itself, after QC and a human's approval (YouTube,
+                                                   Vimeo: resumable uploads; prints a receipt)
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]

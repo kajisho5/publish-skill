@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The Vimeo uploader (roadmap step 5, the first further platform).
+
+- ADR-005: `publish upload --platform vimeo --confirm <token>` uploads the video with the Vimeo API 3.4 resumable (tus 1.0.0) upload: `POST /me/videos` (approach tus) with a personal access token (`PUBLISH_VIMEO_ACCESS_TOKEN`, environment or keychain), then `PATCH` in 128 MiB chunks, with `HEAD` and a resume after an interrupted chunk or a 409, and exponential backoff on 5xx/429 and timeouts. Standard library only, in `platforms/vimeo.py`, the second (and only other) module with network code.
+- Exactly the bound request: the title, description and `privacy.view` (`private` -> `nobody`, the default; `unlisted`; `public` -> `anybody`), nothing added; the token goes to api.vimeo.com only, and the upload link must be https on a vimeo.com host and is redacted. Tags, a thumbnail or captions for Vimeo are refused (`METADATA_INVALID`) before a token is printed (`Uploader.metadata_fields`).
+- Vimeo's errors 4102 / 4104 (weekly / daily quota) are `UPLOAD_LIMIT_EXCEEDED`, 4101 (storage full) `UPLOAD_REJECTED`, 401 `AUTH_FAILED`; failures after the create name the empty placeholder Vimeo keeps.
+- The Vimeo upload-limit table (cited, 2026-10-31; unknowns marked); `plan` counts Vimeo's description in characters and reports the delivery spec as UNCHECKED, because ffmpeg-skill has no Vimeo spec.
+- Tested only against an in-process mock of the API and tus on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The YouTube uploader (roadmap step 4).
 
 - ADR-004: `publish upload --confirm <token>` uploads the video, its thumbnail and its captions with the YouTube Data API v3 resumable upload protocol (OAuth refresh token -> access token, 8 MiB chunks, status query and resume after an interrupted chunk, exponential backoff on 5xx/429 and timeouts, a new session after a 404). Standard library only (`http.client`), in one module, the only one with network code.

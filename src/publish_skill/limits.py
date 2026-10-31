@@ -28,6 +28,15 @@ _YT_HELP_FORMATS = "https://support.google.com/youtube/troubleshooter/2888402?hl
 _YT_HELP_CAPTIONS = "https://support.google.com/youtube/answer/2734698?hl=en"
 _YT_HELP_THUMBS = "https://support.google.com/youtube/answer/72431?hl=en"
 _FFMPEG_CHECK = "ffmpeg-skill `check --platform youtube` (scripts/_platforms.py owns the value)"
+# Vimeo (roadmap step 5, ADR-005): the developer site's guides and the API reference (API 3.4, reference revision
+# 3.4.9), read on the same day.
+_VM_UPLOAD = "https://developer.vimeo.com/api/upload/videos"
+_VM_UPLOAD_START = "https://developer.vimeo.com/api/guides/videos/upload"
+_VM_REF_UPLOAD = "https://developer.vimeo.com/api/reference/videos#upload_video"
+_VM_REF_EDIT = "https://developer.vimeo.com/api/reference/videos#edit_video"
+_VM_RATE = "https://developer.vimeo.com/guidelines/rate-limiting"
+_VM_NO_SPEC = ("ffmpeg-skill has no `vimeo` delivery spec (scripts/_platforms.py, 2026-10-31); ffmpeg-skill owns it, so "
+               "it is not written here (plan reports the delivery spec as UNCHECKED)")
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -42,8 +51,8 @@ def _unknown(note: str, searched: List[str]) -> Dict[str, Any]:
     return {"status": "unknown", "value": None, "note": note, "searched": searched, "accessed": ACCESSED}
 
 
-def _delegated(what: str) -> Dict[str, Any]:
-    return {"status": "delegated", "value": None, "owner": "ffmpeg-skill", "read_from": _FFMPEG_CHECK, "what": what}
+def _delegated(what: str, read_from: str = _FFMPEG_CHECK) -> Dict[str, Any]:
+    return {"status": "delegated", "value": None, "owner": "ffmpeg-skill", "read_from": read_from, "what": what}
 
 
 LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -132,6 +141,78 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                               "A call to this method has a quota cost of 400 units.", checked=False),
         "uploads.per_user": _unknown("the API returns uploadLimitExceeded when \"the user has exceeded the number of videos "
                                      "they may upload\" but states no number", [_YT_INSERT]),
+    },
+    "vimeo": {
+        # the video file. upload.size is stated in bytes, so there is no decimal/binary question here.
+        "video.max_bytes": _known(322122547200, "bytes", _VM_REF_UPLOAD,
+                                  "upload.size: The size in bytes of the video to upload. The maximum value of this field "
+                                  "is `322122547200`, which corresponds to 300 GB.", documented_as="300 GB",
+                                  also=_VM_UPLOAD + " (\"The maximum file size is 300 GB\")"),
+        "video.max_duration_s": _known(24 * 3600, "seconds", _VM_UPLOAD,
+                                       "The maximum file size is 300 GB, and the maximum duration is 24 hours."),
+        "video.file_formats": _unknown("no list of accepted containers is stated: \"our uploader accepts a wide range of "
+                                       "video codecs and file types\"; nothing is checked",
+                                       [_VM_UPLOAD, _VM_UPLOAD_START, _VM_REF_UPLOAD]),
+        "video.codecs": _delegated("video codec", _VM_NO_SPEC),
+        "video.resolution": _delegated("frame size", _VM_NO_SPEC),
+        "video.aspect": _delegated("aspect ratio", _VM_NO_SPEC),
+        "video.fps": _delegated("frame rate", _VM_NO_SPEC),
+        "upload.content_type": _known("application/offset+octet-stream", "MIME type", _VM_UPLOAD,
+                                      "Headers for PATCH to {upload.upload_link}: Tus-Resumable 1.0.0; Upload-Offset 0 for "
+                                      "the initial request; Content-Type application/offset+octet-stream", checked=False),
+        "upload.chunk_bytes": _known("128-512 MB recommended", "bytes per PATCH", _VM_UPLOAD,
+                                     "if you're using a tus library that breaks the video file into separate chunks based "
+                                     "on a maximum size value, we recommend setting the chunk size in the range of "
+                                     "128–512 MB", checked=False, used="128 MiB (134 217 728 bytes): within the range "
+                                                                       "under either reading of MB"),
+        # metadata. The limits are stated on "Edit a video" (PATCH /videos/{video_id}) for the same fields the upload
+        # request takes (name, description); the upload method itself states none.
+        "title.max_chars": _known(128, "characters", _VM_REF_EDIT,
+                                  "name: The title of the video. This field can hold a maximum of 128 characters."),
+        "title.forbidden_chars": _unknown("no forbidden characters are stated", [_VM_REF_UPLOAD, _VM_REF_EDIT]),
+        "description.max_chars": _known(5000, "characters", _VM_REF_EDIT,
+                                        "description: The description of the video. This field can hold a maximum of 5000 "
+                                        "characters."),
+        "description.forbidden_chars": _unknown("no forbidden characters are stated", [_VM_REF_UPLOAD, _VM_REF_EDIT]),
+        # The skill's privacy names, each sent as one privacy.view value (maps_to). `private` is `nobody`, the most
+        # private option: "No one except the owner can access the video."
+        "privacy.values": _known(["private", "unlisted", "public"], "enum (this skill's names, sent as privacy.view)",
+                                 _VM_REF_UPLOAD,
+                                 "privacy.view ... `nobody` - No one except the owner can access the video. This privacy "
+                                 "setting appears as `Private` on the Vimeo front end. ... `unlisted` - Only those with the "
+                                 "private link can access the video. ... `anybody` - Anyone can access the video. This "
+                                 "privacy setting appears as `Public` on the Vimeo front end.",
+                                 maps_to={"private": "nobody", "unlisted": "unlisted", "public": "anybody"},
+                                 api_values=["anybody", "contacts", "disable", "nobody", "password", "team", "unlisted",
+                                             "users"],
+                                 not_offered="disable, password, team, contacts and users: password needs a secret in the "
+                                             "request, team a team plan, contacts and users are deprecated",
+                                 api_default="not stated (the account's own default would apply); this skill always "
+                                             "sends privacy.view, `nobody` unless --privacy says otherwise"),
+        # account limits: they exist (typed errors) but their values depend on the membership and are not stated
+        "storage.max_bytes": _unknown("per account; \"Error code 4101: The authenticated user's maximum disk space has "
+                                      "been reached.\" No number is stated", [_VM_REF_UPLOAD, _VM_UPLOAD_START]),
+        "quota.weekly_uploads": _unknown("per account; \"Error code 4102: The authenticated user's allotted weekly quota "
+                                         "has been reached.\" No number is stated", [_VM_REF_UPLOAD]),
+        "quota.daily_uploads": _unknown("per account; \"Error code 4104: The authenticated user's allotted daily quota has "
+                                        "been reached.\" No number is stated", [_VM_REF_UPLOAD]),
+        "rate_limit.requests_per_minute": _known({"Vimeo Free": 25, "Vimeo Starter": 125, "Vimeo Standard": 250,
+                                                  "Vimeo Advanced": 750, "Vimeo Studio": 1500, "Vimeo Enterprise": 2500},
+                                                 "API requests per minute per user (authenticated token)", _VM_RATE,
+                                                 "Your end user's Vimeo membership level determines how many API requests "
+                                                 "they can make from your app per minute. ... any request from your app "
+                                                 "for this end user results in HTTP status code 429 and error code 9000.",
+                                                 checked=False),
+        "upload.access": _known("the API app needs upload access (Vimeo Free: an approved app, by support ticket)",
+                                "account requirement", _VM_UPLOAD_START,
+                                "for your app to be able to upload videos to Vimeo, you need to turn on upload access. "
+                                "This capability isn't enabled by default.", checked=False),
+        "token.scopes": _known(["upload", "edit"], "OAuth scopes", _VM_UPLOAD,
+                               "To use this guide, you need: ... An access token with the upload and edit scopes.",
+                               checked=False, method_security=_VM_REF_UPLOAD + " (Upload a video: oauth2 scope `upload`)",
+                               note="not checked: a personal access token's scopes are not in any answer this uploader "
+                                    "reads; the API refuses a token without them (401: AUTH_FAILED; another refusal: "
+                                    "UPLOAD_REJECTED)"),
     },
 }
 
