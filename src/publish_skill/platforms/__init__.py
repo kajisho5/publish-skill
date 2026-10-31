@@ -6,13 +6,15 @@ from typing import Dict, List, Type
 
 from ..errors import PublishError
 from .base import Uploader, UploadRequest
+from .linkedin import LinkedInUploader
 from .tiktok import TikTokUploader
 from .vimeo import VimeoUploader
 from .x import XUploader
 from .youtube import YouTubeUploader
 
 _REGISTRY: Dict[str, Type[Uploader]] = {YouTubeUploader.id: YouTubeUploader, VimeoUploader.id: VimeoUploader,
-                                        TikTokUploader.id: TikTokUploader, XUploader.id: XUploader}
+                                        TikTokUploader.id: TikTokUploader, XUploader.id: XUploader,
+                                        LinkedInUploader.id: LinkedInUploader}
 
 __all__ = ["Uploader", "UploadRequest", "get_platform", "platform_ids"]
 

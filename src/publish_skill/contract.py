@@ -18,8 +18,9 @@ from .upload import TOKEN_BINDS, TOKEN_PREFIX
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
                   "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
                   "[--caption <file> ... --caption-language <bcp47> ...]"]
-# the only modules with network code: one per implemented uploader (ADR-004, ADR-005, ADR-006, ADR-007)
-NETWORK_MODULES = ["src/publish_skill/platforms/tiktok.py", "src/publish_skill/platforms/vimeo.py",
+# the only modules with network code: one per implemented uploader (ADR-004, ADR-005, ADR-006, ADR-007, ADR-008)
+NETWORK_MODULES = ["src/publish_skill/platforms/linkedin.py", "src/publish_skill/platforms/tiktok.py",
+                   "src/publish_skill/platforms/vimeo.py",
                    "src/publish_skill/platforms/x.py", "src/publish_skill/platforms/youtube.py"]
 
 CONTRACT_VERSION = "1.0"
@@ -36,7 +37,8 @@ _OP_TOOLS = {
                "description": "Upload a deliverable, its thumbnail and captions to a platform (YouTube: the Data API v3 "
                               "resumable upload; Vimeo: the tus resumable upload, title, description and privacy "
                               "only; TikTok: the Content Posting API Direct Post, title and privacy only; X: the chunked media upload "
-                              "and one public post, its text the title). Dry run unless --confirm carries the token the dry run printed for "
+                              "and one public post, its text the title; LinkedIn: the Videos API multipart upload and one public post, "
+                              "its commentary the title). Dry run unless --confirm carries the token the dry run printed for "
                               "exactly this file, metadata and platform; then a receipt, redacted",
                "argv": ["upload", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--confirm <token>]", "--json"]},
 }
@@ -113,7 +115,12 @@ def contract() -> Dict[str, Any]:
                          "X: private or unlisted posts (X has none), a description, tags, a thumbnail, captions, "
                          "reply settings, polls and labels (refused or not sent)",
                          "X: the OAuth 2.0 flow and refreshing the two-hour access token (`auth login` stores an "
-                         "access token); OAuth 1.0a"],
+                         "access token); OAuth 1.0a",
+                         "LinkedIn: CONNECTIONS, LOGGED_IN and CONTAINER visibility, a description, tags, a thumbnail, "
+                         "captions, mentions and hashtag markup (the commentary is escaped `little` text), a media "
+                         "title, targeting, calls to action and sponsored content (refused or not sent)",
+                         "LinkedIn: the OAuth flow, looking up the author's URN, and refreshing the 60-day access "
+                         "token (`auth login` stores an access token and the author URN)"],
         "tools": tools(),
         "platforms": {"registered": {pid: get_platform(pid).spec() for pid in platform_ids()},
                       "per_platform_pr": "roadmap step 5"},
@@ -140,7 +147,8 @@ def contract() -> Dict[str, Any]:
                                         "*.vimeo.com (the tus upload link Vimeo returns; https only)",
                                         "open.tiktokapis.com",
                                         "*.tiktokapis.com (the upload_url TikTok returns; https only)",
-                                        "api.x.com"],
+                                        "api.x.com", "api.linkedin.com",
+                                        "*.linkedin.com (the signed uploadUrl LinkedIn returns; https only)"],
                       "upload_protocol": {"youtube": {
                           "oauth": "refresh token -> access token (https://oauth2.googleapis.com/token)",
                           "resumable": "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
@@ -187,7 +195,24 @@ def contract() -> Dict[str, Any]:
                                      "Retry-After / x-rate-limit-reset), then the same segment_index again, and "
                                      "finalize's size must equal the file's; initialize and finalize are retried only on "
                                      "429/5xx answers; the post only on 429 (never twice)",
-                          "decision": "docs/decisions.md ADR-007"}},
+                          "decision": "docs/decisions.md ADR-007"},
+                          "linkedin": {
+                          "auth": "OAuth 2.0 member access token with w_member_social or w_organization_social "
+                                  "(Authorization: Bearer, to api.linkedin.com only), Linkedin-Version 202610, "
+                                  "X-Restli-Protocol-Version 2.0.0",
+                          "resumable": "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/"
+                                       "videos-api",
+                          "methods": ["POST /rest/videos?action=initializeUpload",
+                                      "PUT <uploadInstructions[].uploadUrl> (each byte range; ETag)",
+                                      "POST /rest/videos?action=finalizeUpload (uploadedPartIds)",
+                                      "GET /rest/videos/{urn} (until AVAILABLE)", "POST /rest/posts (201, x-restli-id)"],
+                          "chunk_bytes": "the byte ranges LinkedIn gives (4 MiB parts)",
+                          "metadata_sent": ["commentary (the title, little-escaped)", "visibility PUBLIC",
+                                            "content.media.id"],
+                          "retries": "5xx, 429, connection errors and timeouts on a part: exponential backoff (or "
+                                     "Retry-After), then the same part again; initialize and finalize are retried only "
+                                     "on 429/5xx answers; the post only on 429 (never twice)",
+                          "decision": "docs/decisions.md ADR-008"}},
                       "shell": False, "input_is_read_only": True,
                       "child_processes": "adapter.py only: [python, <ffmpeg-skill>/scripts/<tool>.py, ...] as an argv list "
                                     "(tools: _contract, export --list, check), never a shell; ffmpeg-skill declares no "

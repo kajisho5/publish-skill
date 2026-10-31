@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The LinkedIn uploader (roadmap step 5, the fourth further platform).
+
+- ADR-008: `publish upload --platform linkedin --confirm <token>` uploads the video with the Videos API (`initializeUpload`, a `PUT` of each byte range LinkedIn gives to its signed upload URL, the ETags to `finalizeUpload`, the video's status until `AVAILABLE`), then makes one post with `POST /rest/posts` (201, the post's URN in `x-restli-id`). An OAuth 2.0 member access token (`PUBLISH_LINKEDIN_ACCESS_TOKEN`, `w_member_social` or `w_organization_social`) and the author's URN (`PUBLISH_LINKEDIN_AUTHOR`, a person or organization), environment or keychain; `Linkedin-Version: 202610`. Standard library only, in `platforms/linkedin.py`, the fifth module with network code.
+- Exactly the bound request: the title as the commentary, every `little` reserved character escaped so the text appears as typed, `PUBLIC`, the main feed and the video, nothing added. LinkedIn's CONNECTIONS and LOGGED_IN are neither private nor unlisted, so `public` is the only privacy (`plan` FAILs the default `private`); a description, tags, a thumbnail, captions, or a file other than .mp4 are refused before a token is printed. The token goes to api.linkedin.com only; the signed upload URLs (https on linkedin.com only) get no token and are redacted.
+- An interrupted part is `PUT` again with exponential backoff (`Retry-After`); finalize names every part's latest ETag. The post is retried only after a 429: no answer or a 5xx is `UPLOAD_INTERRUPTED` with `retryable: false`, so a post is never made twice. 401 and 403 are `AUTH_FAILED`; `PROCESSING_FAILED` and other 4xx are `UPLOAD_REJECTED`.
+- The LinkedIn upload-limit table (cited, 2026-10-31; unknowns marked: the Posts API's commentary maximum is not stated, so nothing is checked against it); `plan` gains minimum rows, used by LinkedIn's 75 KB and 3 s, and reads ffmpeg-skill's `linkedin` delivery spec.
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The X uploader (roadmap step 5, the third further platform).
 
 - ADR-007: `publish upload --platform x --confirm <token>` uploads the video with the X API v2 chunked media upload (`initialize` with `tweet_video`, `append` in 4 MiB multipart segments, `finalize`, the processing `STATUS`), then makes one post with `POST /2/tweets`. An OAuth 2.0 user access token (`PUBLISH_X_ACCESS_TOKEN`, environment or keychain) with `media.write`, `tweet.write`, `tweet.read` and `users.read`. Standard library only, in `platforms/x.py`, the fourth module with network code.

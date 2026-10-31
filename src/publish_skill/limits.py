@@ -61,6 +61,15 @@ _X_CHECK = "ffmpeg-skill `check --platform x` (scripts/_platforms.py owns the va
 # twitter-text v3: code points in these ranges weigh 1 (100 of scale 100), every other code point 2; a URL counts 23
 X_WEIGHT_ONE_RANGES = ((0, 4351), (8192, 8205), (8208, 8223), (8242, 8247))
 X_URL_LENGTH = 23
+# LinkedIn (roadmap step 5, ADR-008): the Community Management pages on learn.microsoft.com (API version 202610), read
+# on the same day.
+_LI_VIDEOS = "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api"
+_LI_POSTS = "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api"
+_LI_SCHEMA = "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/post-api-schema"
+_LI_LITTLE = "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format"
+_LI_UGC = "https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api"
+_LI_OAUTH = "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow"
+_LI_CHECK = "ffmpeg-skill `check --platform linkedin` (scripts/_platforms.py owns the value)"
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -293,6 +302,63 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                    "will only stay valid for two hours", checked=False,
                                    note="this skill reads an access token only; refreshing it (offline.access) is not "
                                         "implemented (ADR-007)"),
+    },
+    "linkedin": {
+        # the video file (non-connected-television video). "75kb" is read as 75 KiB (the larger reading of a minimum)
+        # and "500MB" as decimal (the smaller reading of a maximum), so a file plan passes is in range either way.
+        "video.min_bytes": _known(75 * 1024, "bytes", _LI_VIDEOS, "File size: Between 75kb and 500MB.",
+                                  documented_as="75kb"),
+        "video.max_bytes": _known(500 * 1000 ** 2, "bytes", _LI_VIDEOS, "File size: Between 75kb and 500MB.",
+                                  documented_as="500MB",
+                                  also="initializeUploadRequest.fileSizeBytes: \"Maximum allowed Videos size is 5GB\" "
+                                       "(the API's own cap; the stated specification, 500MB, is the one checked)"),
+        "video.min_duration_s": _known(3, "seconds", _LI_VIDEOS, "Length: Three seconds to 30 minutes."),
+        "video.max_duration_s": _known(30 * 60, "seconds", _LI_VIDEOS, "Length: Three seconds to 30 minutes."),
+        # the parts are PUT as application/octet-stream, but the specification names one format
+        "video.file_formats": _known([".mp4"], "file extensions", _LI_VIDEOS, "File format: MP4.", enforced=True),
+        "video.codecs": _delegated("video codec", _LI_CHECK),
+        "video.resolution": _delegated("frame size", _LI_CHECK),
+        "video.aspect": _delegated("aspect ratio", _LI_CHECK),
+        "video.fps": _delegated("frame rate", _LI_CHECK),
+        "upload.chunk_bytes": _known("given by LinkedIn per part (uploadInstructions: 0 - 4194303, 4194304 - 8388607, "
+                                     "...)", "bytes per part", _LI_VIDEOS,
+                                     "Parts are sorted by non-overlapping byte-range. The first entry is byte range: 0 - "
+                                     "4194303, the next one with 4194304 - 8388607 and so on.", checked=False,
+                                     used="exactly the byte ranges of uploadInstructions"),
+        "upload.session_validity_s": _known("typically 30 days", "upload URL lifetime", _LI_VIDEOS,
+                                            "Typically URLs expire 30 days from the time an upload is initialized.",
+                                            checked=False),
+        # metadata: the post's commentary is the bound title, as `little` text with every reserved character escaped
+        "title.max_chars": _unknown("the Posts API states no maximum length for `commentary` (it names the error "
+                                    "FIELD_LENGTH_TOO_LONG only); the 3000-character limit is stated for the older UGC "
+                                    "Post API's shareCommentary.text, not for the Posts API, so nothing is checked",
+                                    [_LI_SCHEMA, _LI_POSTS, _LI_UGC]),
+        "title.forbidden_chars": _unknown("none: the reserved `little` characters (| { } @ [ ] ( ) < > # \\ * _ ~) are "
+                                          "escaped with a backslash, so any text is sent as typed",
+                                          [_LI_LITTLE, _LI_SCHEMA]),
+        "privacy.values": _known(["public"], "enum (this skill's names, sent as visibility)", _LI_SCHEMA,
+                                 "visibility ... CONNECTIONS - Represents 1st degree network of owner. PUBLIC - Anyone "
+                                 "can view this. LOGGED_IN - Viewable by logged in members only. CONTAINER - Visibility is "
+                                 "delegated to the owner of the container entity.",
+                                 maps_to={"public": "PUBLIC"},
+                                 not_offered="CONNECTIONS and LOGGED_IN (neither is private nor unlisted, so neither "
+                                             "maps to this skill's names) and CONTAINER (no container is used)",
+                                 api_default="none (visibility is required); this skill's default (`private`) is a "
+                                             "FAIL here, so --privacy public must be given"),
+        "rate_limit.requests": _unknown("no fixed rate limit is stated on the Videos or Posts API pages (429 "
+                                        "TOO_MANY_REQUESTS is named)", [_LI_VIDEOS, _LI_POSTS]),
+        "quota.daily_posts": _unknown("no daily post cap is stated", [_LI_POSTS]),
+        "token.scopes": _known(["w_member_social", "w_organization_social"], "OAuth 2.0 permissions", _LI_POSTS,
+                               "w_member_social | Post, comment, and like posts on behalf of an authenticated member. "
+                               "... w_organization_social | Post, comment, and like posts on behalf of an organization.",
+                               checked=False,
+                               note="w_member_social for a person author, w_organization_social (and an ADMINISTRATOR, "
+                                    "DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN page role) for an organization "
+                                    "author; not checked offline: LinkedIn answers 401 or 403 (AUTH_FAILED)"),
+        "token.lifetime_s": _known(60 * 86400, "seconds (access token)", _LI_OAUTH,
+                                   "Currently, all access tokens are issued with a 60-day lifespan.", checked=False,
+                                   note="this skill reads an access token only; refreshing it is not implemented "
+                                        "(ADR-008)"),
     },
     "vimeo": {
         # the video file. upload.size is stated in bytes, so there is no decimal/binary question here.
