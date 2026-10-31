@@ -5,7 +5,7 @@ Written from a read-only audit of this repository on 2026-10-30. Each step below
 
 ## Where it stands
 
-Scaffold: README with `# publish` only.
+Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contract`, `doctor`, `platforms` and the dry run of `upload` behind a per-deliverable confirmation token (ADR-001). No uploader is implemented; nothing is uploaded yet.
 
 ## What this repository owns
 
@@ -22,7 +22,7 @@ None, and the agent has no SkillSpec for publishing.
 
 ## Steps
 
-- [ ] **1. Scaffold** — package, contract/doctor (network: true), SKILL.md, CI on 3 OSes
+- [x] **1. Scaffold** — package, contract/doctor (network: true), SKILL.md, CI on 3 OSes ([#4](https://github.com/kajisho5/publish-skill/pull/4))
   - Done when: contract validates against the OS schema
 - [ ] **2. `publish plan` (offline)** — validate deliverable + title/description/tags/privacy/thumbnail/captions against platform limits; encode spec from ffmpeg-skill export --list / check
   - Done when: structured FAIL on an over-long title or wrong aspect, no network
