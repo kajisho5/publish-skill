@@ -2,6 +2,14 @@
 
 ## 0.1.0 - unreleased
 
+The Facebook uploader (roadmap step 5, the fifth further platform).
+
+- ADR-009: `publish upload --platform facebook --confirm <token>` uploads the video with the Resumable Upload API (`POST /<APP_ID>/uploads` for a session, `POST /upload:<id>` with `file_offset` and the file streamed in one body, `GET /upload:<id>` for the offset to resume from), then publishes one video on the Page with `POST graph-video.facebook.com/v26.0/<PAGE_ID>/videos` and the file handle. Four values (`PUBLISH_FACEBOOK_APP_ID`, `PUBLISH_FACEBOOK_USER_ACCESS_TOKEN`, `PUBLISH_FACEBOOK_PAGE_ID`, `PUBLISH_FACEBOOK_PAGE_ACCESS_TOKEN`), environment or keychain. Standard library only, in `platforms/facebook.py`, the sixth module with network code.
+- Exactly the bound request: title and description when bound, and the privacy as documented flags (`public`: published; `unlisted`: published and `secret`, viewable by permalink only). An unpublished video's audience is not documented, so `private` is not offered (`plan` FAILs the default); tags, a thumbnail, captions, or a file other than .mp4 are refused before a token is printed. The user token goes to the upload only, the Page token to the publish only; the file handle is redacted.
+- An interrupted upload asks for `file_offset` and sends the rest, with exponential backoff (`Retry-After`) after no answer, 5xx, 429 or Graph codes 1, 2, 4, 17, 341; the last block is held back unless the file still has the bound sha256. The publish is retried only when throttled: no answer, a 5xx or code 1/2 is `UPLOAD_INTERRUPTED` with `retryable: false`, so a video is never published twice. Codes 190, 102, 10 and 200-299 are `AUTH_FAILED`.
+- The Facebook upload-limit table (cited, 2026-10-31): no size, duration, title or description limit is stated on the pages read, so those are `unknown` and nothing is checked against them; .mp4 is enforced (the upload session's `file_type`). `plan` reads ffmpeg-skill's `facebook` delivery spec.
+- Tested only against an in-process mock of the API on 127.0.0.1; the socket guard lets tests reach nothing else. No real upload has been made.
+
 The LinkedIn uploader (roadmap step 5, the fourth further platform).
 
 - ADR-008: `publish upload --platform linkedin --confirm <token>` uploads the video with the Videos API (`initializeUpload`, a `PUT` of each byte range LinkedIn gives to its signed upload URL, the ETags to `finalizeUpload`, the video's status until `AVAILABLE`), then makes one post with `POST /rest/posts` (201, the post's URN in `x-restli-id`). An OAuth 2.0 member access token (`PUBLISH_LINKEDIN_ACCESS_TOKEN`, `w_member_social` or `w_organization_social`) and the author's URN (`PUBLISH_LINKEDIN_AUTHOR`, a person or organization), environment or keychain; `Linkedin-Version: 202610`. Standard library only, in `platforms/linkedin.py`, the fifth module with network code.

@@ -63,7 +63,7 @@ def file_checks(platform_id: str, path: str, size: int) -> List[Dict[str, Any]]:
         ok = ext in formats
         # WARN on YouTube (the bytes decide); FAIL where the table marks the list enforced (TikTok: the upload's
         # Content-Type must name one of them, ADR-006; X: initialize's media_type, ADR-007; LinkedIn: "File format: MP4.",
-        # ADR-008)
+        # ADR-008; Facebook: the upload session's file_type, ADR-009)
         bad = "FAIL" if L.limits_of(platform_id)["video.file_formats"].get("enforced") else "WARN"
         rows.append(_row("file format", "PASS" if ok else bad, ext or "(no extension)", formats, platform_id,
                          "video.file_formats", "" if ok else "re-export to .mp4: ffmpeg-skill export --preset <platform>"))

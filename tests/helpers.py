@@ -1,10 +1,10 @@
 """Shared test helpers: paths, the CLI runner (stdout and stderr captured), an environment patcher, the fake keychain
-the offline test base class with its socket guard, and the loopback YouTube, Vimeo, TikTok, X and LinkedIn mock fixtures. Nothing here is part of the
+the offline test base class with its socket guard, and the loopback YouTube, Vimeo, TikTok, X, LinkedIn and Facebook mock fixtures. Nothing here is part of the
 package.
 
 No test may contact the network (ADR-001, ADR-004). OfflineTestCase patches socket connect, create_connection and
 getaddrinfo for every test so that the only address a test can reach is 127.0.0.1 on the port of a mock server the
-test itself started (LOOPBACK_PORTS); anything else, Google, Vimeo, TikTok, X and LinkedIn included, raises NetworkAttempted, a BaseException, so no
+test itself started (LOOPBACK_PORTS); anything else, Google, Vimeo, TikTok, X, LinkedIn and Facebook included, raises NetworkAttempted, a BaseException, so no
 `except Exception` in the package or the CLI can turn it into an error document: the test fails.
 
 No test may reach a real OS keychain (ADR-003). Importing this module replaces `keychain._import_keyring`, the
@@ -32,8 +32,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from publish_skill import cli  # noqa: E402
 from publish_skill import credentials as creds  # noqa: E402
 from publish_skill import keychain  # noqa: E402
-from publish_skill.platforms import linkedin, tiktok, vimeo, x, youtube  # noqa: E402
+from publish_skill.platforms import facebook, linkedin, tiktok, vimeo, x, youtube  # noqa: E402
 
+from mock_facebook import MockFacebook  # noqa: E402
 from mock_linkedin import MockLinkedIn  # noqa: E402
 from mock_tiktok import MockTikTok  # noqa: E402
 from mock_vimeo import MockVimeo  # noqa: E402
@@ -244,6 +245,23 @@ def linkedin_mock(test: unittest.TestCase, token: str, author: str, part_size: i
     for p in (mock.patch.object(linkedin.LinkedInUploader, "api_base", m.url),
               mock.patch.object(linkedin, "_sleep", test.waits.append),
               mock.patch.object(linkedin, "_rand", lambda: 0.5)):
+        p.start()
+        test.addCleanup(p.stop)
+    return m
+
+
+def facebook_mock(test: unittest.TestCase, secrets: Dict[str, str]) -> MockFacebook:
+    """Start a MockFacebook on 127.0.0.1 for this test with these credentials and point the Facebook uploader's two
+    bases (graph and graph-video) at it, with backoff that records its waits (test.waits) instead of sleeping.
+    Stopped when the test ends."""
+    m = MockFacebook(secrets["PUBLISH_FACEBOOK_APP_ID"], secrets["PUBLISH_FACEBOOK_USER_ACCESS_TOKEN"],
+                     secrets["PUBLISH_FACEBOOK_PAGE_ID"], secrets["PUBLISH_FACEBOOK_PAGE_ACCESS_TOKEN"]).start(LOOPBACK_PORTS)
+    test.addCleanup(m.stop)
+    test.waits = []
+    for p in (mock.patch.object(facebook.FacebookUploader, "api_base", m.url),
+              mock.patch.object(facebook.FacebookUploader, "video_base", m.url),
+              mock.patch.object(facebook, "_sleep", test.waits.append),
+              mock.patch.object(facebook, "_rand", lambda: 0.5)):
         p.start()
         test.addCleanup(p.stop)
     return m

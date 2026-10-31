@@ -70,6 +70,14 @@ _LI_LITTLE = "https://learn.microsoft.com/en-us/linkedin/marketing/community-man
 _LI_UGC = "https://learn.microsoft.com/en-us/linkedin/compliance/integrations/shares/ugc-post-api"
 _LI_OAUTH = "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow"
 _LI_CHECK = "ffmpeg-skill `check --platform linkedin` (scripts/_platforms.py owns the value)"
+# Facebook (roadmap step 5, ADR-009): the Video API, Resumable Upload API, Page videos reference and error-handling
+# pages on developers.facebook.com (Graph API v26.0), read on the same day.
+_FB_PUBLISH = "https://developers.facebook.com/docs/video-api/guides/publishing"
+_FB_UPLOAD = "https://developers.facebook.com/docs/graph-api/guides/upload"
+_FB_PAGE_VIDEOS = "https://developers.facebook.com/docs/graph-api/reference/page/videos/"
+_FB_OVERVIEW = "https://developers.facebook.com/docs/video-api/overview"
+_FB_ERRORS = "https://developers.facebook.com/docs/graph-api/guides/error-handling"
+_FB_CHECK = "ffmpeg-skill `check --platform facebook` (scripts/_platforms.py owns the value)"
 
 
 def _known(value: Any, unit: str, source: str, quote: str, documented_as: Optional[str] = None, **extra: Any) -> Dict[str, Any]:
@@ -302,6 +310,53 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                    "will only stay valid for two hours", checked=False,
                                    note="this skill reads an access token only; refreshing it (offline.access) is not "
                                         "implemented (ADR-007)"),
+    },
+    "facebook": {
+        # the video file: no size or duration limit is stated on the pages read (the Video API overview, the publishing
+        # guide, the Resumable Upload API, the Page videos reference); error 382 "The video file is too small" is named
+        # without a number
+        "video.max_bytes": _unknown("no maximum file size is stated", [_FB_PUBLISH, _FB_UPLOAD, _FB_PAGE_VIDEOS,
+                                                                        _FB_OVERVIEW]),
+        "video.min_bytes": _unknown("error 382 \"The video file is too small\" is named, with no size",
+                                    [_FB_PAGE_VIDEOS]),
+        "video.max_duration_s": _unknown("no maximum duration is stated", [_FB_PUBLISH, _FB_PAGE_VIDEOS, _FB_OVERVIEW]),
+        # the upload session's file_type must name the type, and video/mp4 is the only video type listed
+        "video.file_formats": _known([".mp4"], "file extensions", _FB_UPLOAD,
+                                     "file_type ... Valid values are: application/pdf, image/jpeg, image/jpg, image/png, "
+                                     "and video/mp4", enforced=True, content_types={".mp4": "video/mp4"}),
+        "video.codecs": _delegated("video codec", _FB_CHECK),
+        "video.resolution": _delegated("frame size", _FB_CHECK),
+        "video.aspect": _delegated("aspect ratio", _FB_CHECK),
+        "video.fps": _delegated("frame rate", _FB_CHECK),
+        "upload.chunk_bytes": _known("one body from file_offset to the end (no chunk size is documented)", "bytes",
+                                     _FB_UPLOAD, "Send another POST ... setting file_offset to the value returned by "
+                                     "the GET", checked=False, used="the whole remaining file, streamed from disk"),
+        # metadata
+        "title.max_chars": _unknown("no maximum title length is stated (\"title: The title of the video. Supports "
+                                    "emoji\")", [_FB_PAGE_VIDEOS, _FB_PUBLISH]),
+        "title.forbidden_chars": _unknown("no forbidden characters are stated", [_FB_PAGE_VIDEOS]),
+        "description.max_chars": _unknown("no maximum description length is stated", [_FB_PAGE_VIDEOS, _FB_PUBLISH]),
+        "privacy.values": _known(["public", "unlisted"], "enum (this skill's names, sent as published / secret)",
+                                 _FB_PAGE_VIDEOS,
+                                 "published: Whether a post about the video is published (default true). ... secret: "
+                                 "If true, the video doesn't appear on Facebook or in search, but can be viewed via "
+                                 "permalink and embeds.",
+                                 maps_to={"public": {"published": True, "secret": False},
+                                          "unlisted": {"published": True, "secret": True}},
+                                 not_offered="private: an unpublished Page video (published=false) has no documented "
+                                             "audience; scheduled, backdated and targeted posts are not offered",
+                                 api_default="published, not secret; this skill always sends both, and its default "
+                                             "(`private`) is a FAIL here"),
+        "rate_limit.requests": _unknown("no number is stated on the pages read; throttling is typed (error codes 4, "
+                                        "17 and 341: \"Wait and retry the operation\")", [_FB_ERRORS, _FB_PAGE_VIDEOS]),
+        "quota.daily_posts": _unknown("no daily post cap is stated", [_FB_PAGE_VIDEOS, _FB_PUBLISH]),
+        "token.scopes": _known(["pages_manage_posts", "pages_read_engagement", "pages_show_list"],
+                               "Facebook Login permissions", _FB_PUBLISH,
+                               "A Page access token requested by a person who can perform the CREATE_CONTENT task on "
+                               "the Page ... pages_show_list, pages_read_engagement, pages_manage_posts",
+                               checked=False, upload=_FB_UPLOAD + " (the upload takes a User access token)",
+                               note="not checked offline: Facebook answers with code 190, 10 or 200-299 (AUTH_FAILED)"),
+        "token.lifetime_s": _unknown("the token lifetimes are not stated on the pages read", [_FB_PUBLISH, _FB_UPLOAD]),
     },
     "linkedin": {
         # the video file (non-connected-television video). "75kb" is read as 75 KiB (the larger reading of a minimum)
