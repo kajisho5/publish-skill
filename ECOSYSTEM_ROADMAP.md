@@ -18,7 +18,7 @@ Scaffold (0.1.0, [#4](https://github.com/kajisho5/publish-skill/pull/4)): `contr
 
 ## Wiring
 
-None, and the agent has no SkillSpec for publishing.
+The agent plans `publish.upload` as a CONFIRM decision after QC, runs only `plan` and the `upload` dry run, and uploads once on `video-agent publish --confirm` (step 6, video-production-agent#99). No real upload has been made yet.
 
 ## Steps
 
@@ -47,4 +47,4 @@ None, and the agent has no SkillSpec for publishing.
 Platform delivery specs (配信プラットフォーム仕様) are owned by ffmpeg-skill (owner decision, 2026-10-30); this skill reads them and owns only upload-side limits (アップロード制限).
 
 ---
-Engine for every media operation: [ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill) (42 tools, treated as complete). Orchestrator: [video-production-agent](https://github.com/kajisho5/video-production-agent).
+Engine for every media operation: [ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill) (3.x, 42 tools, contract_version 2.0; treated as complete, proposals go to Velisa's ROADMAP). Orchestrator: [video-production-agent](https://github.com/kajisho5/video-production-agent).
