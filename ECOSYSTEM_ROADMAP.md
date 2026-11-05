@@ -41,6 +41,18 @@ The agent plans `publish.upload` as a CONFIRM decision after QC, runs only `plan
   - [x] Instagram Reels — resumable REELS container (graph.facebook.com), the rupload upload (offset 0; resent whole: no offset query is documented), status_code until FINISHED, media_publish, Facebook Login for Business token, title as the caption / public only, cited limits (300 MB, 3 s–15 min, 2200-character caption); mock-server tests incl. a resend after an interruption and a reel never published twice ([#13](https://github.com/kajisho5/publish-skill/pull/13), ADR-010)
 - [x] **6. (agent side) SkillSpec publish_upload** — always CONFIRM, after QC ([video-production-agent#99](https://github.com/kajisho5/video-production-agent/pull/99), its ADR-087: decision `publish.upload` with a CONFIRM floor after the QC gate; render runs only the offline `plan` and the `upload` dry run; the upload is `video-agent publish <artifact> --confirm <token>` by a human, once)
   - Done when: plan shows a blocked publish step
+- [ ] **7. First real uploads on test accounts** — one real upload per platform on a test account (private), with the result and the platform's processed facts recorded, so each uploader moves from mock-tested to used. Field review 2026-11-05 (Velisa ROADMAP, third round)
+  - なぜ要るか：本番の納品日に初めて実アップロードする危険を無くす
+  - Done when: a recorded private upload per platform, with its processing status
+- [ ] **8. Chapters, scheduled time and captions per language** — `plan` checks description chapters against YouTube's rules (first at 0:00, at least three, each at least 10 s), takes a scheduled publish time as upload metadata, and uploads one caption track per language (subtitle-skill output) with localised titles and descriptions given by the caller
+  - なぜ要るか：チャプター付き・多言語字幕付き・予約公開の動画を、一度の操作で正しく上げられる
+  - Done when: a plan with chapters starting at 0:05 is refused with the rule; a mock upload carries two caption tracks and a scheduled time
+- [ ] **9. Clips as a series** — a set of Shorts / Reels from one source uploaded in order with their own titles and a link back to the full video, each one CONFIRM, never sent twice on retry
+  - なぜ要るか：配信アーカイブから切り出した複数のショートを、取りこぼしや二重投稿なく出せる
+  - Done when: a mock run of five clips with a failure on clip 3 resumes at clip 3 and uploads each once
+- [ ] **10. Restricted delivery for organisers** — unlisted or private uploads (YouTube unlisted / private, Vimeo password or domain-limited) and a delivery receipt per session (URL, privacy, checksum of the uploaded file) for the organiser
+  - なぜ要るか：学会や企業イベントの限定公開を、セッションごとの URL 一覧付きで納品できる
+  - Done when: a mock run of three sessions writes a receipt with three URLs and their privacy
 
 ## Boundaries
 
