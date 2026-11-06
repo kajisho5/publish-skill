@@ -97,7 +97,7 @@ class ContractTests(OfflineTestCase):
     def test_network_and_confirmation_are_declared(self):
         c = contract()
         self.assertTrue(c["execution"]["network"])              # roadmap step 1: network: true
-        self.assertEqual(c["execution"]["network_tools"], ["publish/upload"])
+        self.assertEqual(c["execution"]["network_tools"], ["publish/upload", "publish/series"])     # ADR-012
         self.assertTrue(c["execution"]["network_in_this_release"])
         self.assertEqual(c["execution"]["network_code"], ["src/publish_skill/platforms/facebook.py",
                                                           "src/publish_skill/platforms/linkedin.py",
@@ -119,8 +119,8 @@ class ContractTests(OfflineTestCase):
                          ["facebook", "linkedin", "reels", "tiktok", "vimeo", "x", "youtube"])
         self.assertFalse(c["execution"]["shell"])
         tools = {t["tool_id"]: t for t in c["tools"]}
-        self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload"})
-        self.assertEqual(c["confirmation"]["required_for"], ["publish/upload"])
+        self.assertEqual({t for t, v in tools.items() if v["network"]}, {"publish/upload", "publish/series"})
+        self.assertEqual(c["confirmation"]["required_for"], ["publish/upload", "publish/series"])
         self.assertFalse(c["confirmation"]["from_environment_or_config"])
         self.assertEqual(c["credentials"]["sources"], ["environment", "keychain"])     # ADR-003
         self.assertFalse(c["credentials"]["printed"])

@@ -2,6 +2,12 @@
 
 ## 0.1.0 - unreleased
 
+Clips as a series (roadmap step 9).
+
+- ADR-012: `publish series MANIFEST --platform ID` uploads the clips a manifest lists (Shorts / Reels cut from one source) in order, each with its own title, a link back to the full video (`<link_label>: <url>`, after the description or, where none is sent, the title) and its own confirmation token from the series dry run. Every clip goes through `upload`'s gate unchanged.
+- A state file (`<manifest>.publish-state.json`, `--state`) records `sending` / `uploaded` per clip; a re-run resumes at the first clip not uploaded and never sends a clip twice. An unknown outcome blocks the series (`UPLOAD_PARTIAL`) until `--resolve N=uploaded|not-uploaded`. No credential or upload link is written.
+- Mock-tested on YouTube (five clips, a failure on clip 3, a resume at clip 3, each uploaded once) and Instagram Reels (a lost publish answer blocks the series); no real upload has been made.
+
 Chapters, a scheduled time and captions per language (roadmap step 8).
 
 - ADR-011: `--language` (snippet.defaultLanguage), `--localizations FILE` (translated titles and descriptions, a UTF-8 JSON object keyed by BCP-47 tag) and `--publish-at` (status.publishAt, RFC 3339 with an offset, privacy `private` only) on `plan` and `upload`, sent by the YouTube uploader in the `videos.insert` resource and refused by every other platform before a token. The token binds them only when set, so earlier tokens are unchanged.

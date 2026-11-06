@@ -63,6 +63,7 @@ jobs:
           grep -E "^test_reels_post_is_never_published_twice .* \.\.\. ok" test.log
           grep -E "^test_chapters_starting_at_0_05_are_refused_with_the_rule .* \.\.\. ok" test.log
           grep -E "^test_a_mock_upload_carries_two_caption_tracks_and_a_scheduled_time .* \.\.\. ok" test.log
+          grep -E "^test_five_clips_with_a_failure_on_clip_3_resume_at_clip_3_and_upload_each_once .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no credentials, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash
