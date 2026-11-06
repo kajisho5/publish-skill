@@ -22,7 +22,8 @@ Protocol (sources in docs/decisions.md ADR-004):
      404 means the session expired: start a new session and upload from the beginning.
 
 Exactly what the token bound is sent. The video resource is built from the bound metadata only (title, description,
-tags, privacy; nothing else, no default added), the thumbnail and each caption file are the bound files, and every
+tags, privacy, and the default language, localizations and scheduled time of ADR-011 when bound; nothing else, no
+default added), the thumbnail and each caption file are the bound files, and every
 file is hashed as its bytes are sent: the final chunk is held back unless the bytes sent so far plus that chunk have the
 sha256 the token bound. YouTube creates the video only when the last byte arrives, so a file edited after the gate is
 never published (CONFIRM_MISMATCH).
@@ -85,8 +86,9 @@ def _hold(value: str) -> None:
 
 
 def video_resource(metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """The videos.insert resource for the bound metadata: exactly its title, description, tags and privacy. A field
-    the metadata leaves unset is left out; nothing is added (no category, no language, no default)."""
+    """The videos.insert resource for the bound metadata: exactly its title, description, tags and privacy, and (ADR-011)
+    its default language (snippet.defaultLanguage), localized titles and descriptions (localizations) and scheduled
+    time (status.publishAt). A field the metadata leaves unset is left out; nothing is added (no category, no default)."""
     privacy = metadata["privacy"]
     if privacy not in PRIVACY_VALUES:
         raise PublishError("INVALID_ARGUMENT", f"privacy {privacy!r} is not one of {', '.join(PRIVACY_VALUES)}")
@@ -97,9 +99,17 @@ def video_resource(metadata: Dict[str, Any]) -> Dict[str, Any]:
         snippet["description"] = metadata["description"]
     if metadata.get("tags"):
         snippet["tags"] = list(metadata["tags"])
+    if metadata.get("language") is not None:
+        snippet["defaultLanguage"] = metadata["language"]
     resource: Dict[str, Any] = {"status": {"privacyStatus": privacy}}
+    if metadata.get("publish_at") is not None:
+        if privacy != "private":           # plan FAILs it first; never send a request YouTube must refuse
+            raise PublishError("INVALID_ARGUMENT", "a scheduled publish time needs privacy private")
+        resource["status"]["publishAt"] = metadata["publish_at"]
     if snippet:
         resource["snippet"] = snippet
+    if metadata.get("localizations"):
+        resource["localizations"] = {lang: dict(texts) for lang, texts in metadata["localizations"].items()}
     return resource
 
 
@@ -117,6 +127,8 @@ class YouTubeUploader(Uploader):
     credential_env = ("PUBLISH_YOUTUBE_CLIENT_ID", "PUBLISH_YOUTUBE_CLIENT_SECRET", "PUBLISH_YOUTUBE_REFRESH_TOKEN")
     docs_url = "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol"
     ffmpeg_skill_platform = "youtube"
+    metadata_fields = ("title", "description", "tags", "privacy", "thumbnail", "captions", "language", "localizations",
+                       "publish_at")
 
     # Endpoints and tuning. Only code changes these (the tests point them at a loopback mock server); no flag,
     # environment variable or file does.
@@ -156,9 +168,14 @@ class YouTubeUploader(Uploader):
             raise PublishError("UPLOAD_REJECTED", "videos.insert finished without a video id; check YouTube Studio before "
                                "uploading again", {"platform": self.id, "step": "videos.insert", "uploaded": None})
         sent: Dict[str, Any] = {"video": resource, "thumbnail": None, "captions": []}
+        status = video.get("status") if isinstance(video.get("status"), dict) else {}
         result: Dict[str, Any] = {"video_id": video_id, "url": WATCH_URL + video_id,
-                                  "privacy": (video.get("status") or {}).get("privacyStatus"), "sent": sent,
+                                  "privacy": status.get("privacyStatus"), "sent": sent,
                                   "thumbnail": None, "captions": [], "warnings": []}
+        if md.get("publish_at") is not None:
+            result["publish_at"] = status.get("publishAt", md["publish_at"])
+        if md.get("localizations"):
+            result["localizations"] = sorted(md["localizations"])
         step = "thumbnails.set"
         try:
             thumb = md.get("thumbnail")
@@ -186,6 +203,9 @@ class YouTubeUploader(Uploader):
         if result["privacy"] is not None and result["privacy"] != md["privacy"]:
             result["warnings"].append(f"sent privacy {md['privacy']!r}, YouTube reports {result['privacy']!r} "
                                       "(the channel's or the API project's settings can override it)")
+        if md.get("publish_at") is not None and status.get("publishAt") is None:
+            result["warnings"].append(f"sent publishAt {md['publish_at']!r}; YouTube's answer does not report it: check "
+                                      "the schedule in YouTube Studio")
         result["transfer"] = dict(self._stats)
         result["processing"] = "YouTube processes the video after the upload; it may not be watchable yet"
         return result

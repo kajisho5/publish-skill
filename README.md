@@ -64,6 +64,7 @@ Metadata flags, the same on `plan` and `upload`: `--title`, `--description` or `
 2. `videos.insert`: a resumable session (`POST https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=...`), then the file in 8 MiB chunks (`Content-Range`, 308 + `Range` until the last).
 3. An interrupted chunk (no answer, a reset, a 60 s timeout, 5xx, 429 or a rate-limit reason) waits with exponential backoff (`random Ã— 2^n` s, at most 64 s, or `Retry-After` up to 5 min), asks the session how far it got (`Content-Range: bytes */TOTAL`) and resumes from the next byte; at most 10 retries per request. An expired session (404) starts again from the beginning, at most twice.
 4. `thumbnails.set` and `captions.insert` (one per caption file, named by its language) use the same protocol, with the new video's id.
+   `--language` (snippet.defaultLanguage), `--localizations FILE` (translated titles and descriptions, `{"ja": {"title": "...", "description": "..."}}`) and `--publish-at 2026-12-01T09:00:00Z` (status.publishAt; with `--privacy private`, YouTube makes the video public at that time) go into the `videos.insert` resource ([ADR-011](docs/decisions.md)). `plan` checks description chapters against YouTube's rules (first at 0:00, at least three, ascending, each at least 10 s) and refuses captions that repeat a language: one track per language.
 5. The receipt (`uploaded: true`, `result.video_id`, `url`, `privacy`, `sent`, `transfer`) passes through the redactor. YouTube processes the video afterwards.
 
 | Error | Exit | Retryable | Meaning |
@@ -234,6 +235,13 @@ Read from YouTube's own documentation on 2026-10-31 (`publish contract --json` â
 | `captions.extensions` | .srt .sbv .sub .mpsub .lrc .cap .smi .sami .rt .vtt .ttml .dfxp .scc .stl .tds .cin .asc | WARN otherwise | https://support.google.com/youtube/answer/2734698?hl=en |
 | `captions.plain_utf8_extensions` | .srt, .sbv and .sub must be plain UTF-8 | FAIL otherwise | https://support.google.com/youtube/answer/2734698?hl=en |
 | `captions.language` | a BCP-47 language tag, required by captions.insert (`--caption-language`) | FAIL when missing or not tag-shaped | https://developers.google.com/youtube/v3/docs/captions |
+| `chapters.first_at_s` | the first chapter timestamp is 0:00 (read 2026-11-06) | FAIL otherwise, when the description has chapter lines | https://support.google.com/youtube/answer/9884579?hl=en |
+| `chapters.min_count` | at least three timestamps, in ascending order | FAIL otherwise | https://support.google.com/youtube/answer/9884579?hl=en |
+| `chapters.min_length_s` | each chapter at least 10 s (the last one against the measured duration) | FAIL otherwise | https://support.google.com/youtube/answer/9884579?hl=en |
+| `schedule.publish_at` | `status.publishAt`, ISO 8601, only with privacy `private` (`--publish-at`, RFC 3339 with an offset) | FAIL on another format or privacy | https://developers.google.com/youtube/v3/docs/videos |
+| `localizations.default_language` | `snippet.defaultLanguage` (`--language`) is required with localizations (`defaultLanguageNotSet`) | FAIL without it | https://developers.google.com/youtube/v3/docs/errors |
+| `localizations.language` | each localization keyed by a BCP-47 tag | FAIL when not tag-shaped | https://developers.google.com/youtube/v3/docs/videos |
+| `localizations.text_limits` | unknown (not stated for localized titles and descriptions) | WARN above the snippet's own limits | searched: the two API pages above |
 | `quota.videos_insert` | 100 calls per day, 1 unit each in the Video Uploads bucket | reported | https://developers.google.com/youtube/v3/docs/videos/insert |
 | `quota.thumbnails_set_units` | about 50 units per call | reported | https://developers.google.com/youtube/v3/docs/thumbnails/set |
 | `quota.captions_insert_units` | 400 units per call | reported | https://developers.google.com/youtube/v3/docs/captions/insert |

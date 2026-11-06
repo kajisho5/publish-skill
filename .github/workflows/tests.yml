@@ -33,7 +33,7 @@ jobs:
         run: |
           if [ "${{ matrix.extra }}" = keychain ]; then python -m pip install -e ".[keychain]" pyflakes; else python -m pip install -e . pyflakes; fi
       - run: python -m pyflakes src tests
-      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mocks (ADR-004 .. ADR-010)
+      - name: unit tests; the fake keychain is what runs (ADR-003); uploads reach only the loopback mocks (ADR-004 .. ADR-011)
         shell: bash
         run: |
           set -o pipefail
@@ -61,6 +61,8 @@ jobs:
           grep -E "^test_the_guard_blocks_every_non_loopback_host_for_reels .* \.\.\. ok" test.log
           grep -E "^test_reels_retry_after_an_interrupted_upload .* \.\.\. ok" test.log
           grep -E "^test_reels_post_is_never_published_twice .* \.\.\. ok" test.log
+          grep -E "^test_chapters_starting_at_0_05_are_refused_with_the_rule .* \.\.\. ok" test.log
+          grep -E "^test_a_mock_upload_carries_two_caption_tracks_and_a_scheduled_time .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no credentials, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash

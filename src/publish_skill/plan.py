@@ -11,6 +11,8 @@ when any row fails, otherwise INCOMPLETE when any row is unchecked, otherwise WA
 WARN only, and the CLI exits 1 otherwise. Nothing is uploaded, no credential is read and no connection is opened."""
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -27,6 +29,11 @@ PLAN_SCHEMA = f"{SKILL_ID}/plan@1"
 STATUSES = ("PASS", "WARN", "FAIL", "UNCHECKED")
 # the shape of a BCP-47 tag (RFC 5646): a 2-3 letter (or 4-8 letter) language, then hyphenated 1-8 character subtags
 _BCP47 = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$|^[A-Za-z]{4,8}(?:-[A-Za-z0-9]{1,8})*$")
+# a chapter line (ADR-011): a timestamp at the start of a line, after optional bullets or an opening bracket;
+# M:SS, MM:SS or H:MM:SS, not followed by another digit or colon
+_CHAPTER = re.compile(r"^[ \t\-\u2013\u2014\u2022*\u00b7\[(]*(?:([0-9]{1,2}):)?([0-9]{1,2}):([0-5][0-9])(?![0-9:])")
+# RFC 3339 date-time with an explicit offset (ADR-011): the ISO 8601 profile YouTube's datetime fields use
+_RFC3339 = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
 
 
 def _row(check: str, status: str, value: Any, limit: Any, platform_id: str, key: Optional[str], fix: str = "",
@@ -92,21 +99,57 @@ def _forbidden(text: str, chars: Optional[List[str]]) -> List[str]:
 
 
 _FIELD_FLAGS = {"title": "--title", "description": "--description", "tags": "--tag", "thumbnail": "--thumbnail",
-                "captions": "--caption"}
+                "captions": "--caption", "language": "--language", "localizations": "--localizations",
+                "publish_at": "--publish-at"}
+_OPTIONAL_FIELDS = ("title", "description", "tags", "thumbnail", "captions", "language", "localizations", "publish_at")
+
+
+def chapters(description: Optional[str]) -> List[Dict[str, Any]]:
+    """The chapter lines of a description, in order: [{"line", "seconds", "text"}] (ADR-011)."""
+    out: List[Dict[str, Any]] = []
+    for n, line in enumerate((description or "").splitlines(), 1):
+        m = _CHAPTER.match(line)
+        if m:
+            h, mnt, sec = int(m.group(1) or 0), int(m.group(2)), int(m.group(3))
+            out.append({"line": n, "seconds": h * 3600 + mnt * 60 + sec, "text": line.strip()})
+    return out
+
+
+def _clock(seconds: float) -> str:
+    s = int(seconds)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def valid_publish_at(value: str) -> bool:
+    """RFC 3339 with an explicit offset, and a real calendar date and time."""
+    m = _RFC3339.match(value)
+    if not m:
+        return False
+    y, mo, d, hh, mi, ss = (int(m.group(i)) for i in range(1, 7))
+    off = m.group(8)
+    if off != "Z" and not (int(off[1:3]) <= 23 and int(off[4:6]) <= 59):
+        return False
+    try:
+        datetime.datetime(y, mo, d, hh, mi, ss)
+    except ValueError:
+        return False
+    return True
 
 
 def unsupported_fields(platform_id: str, md: Metadata) -> List[str]:
     """The metadata fields that are set but that the platform's uploader does not send (Uploader.metadata_fields)."""
     sent = get_platform(platform_id).metadata_fields
     present = {"title": md.title is not None, "description": md.description is not None, "tags": bool(md.tags),
-               "thumbnail": md.thumbnail is not None, "captions": bool(md.captions)}
-    return [f for f in ("title", "description", "tags", "thumbnail", "captions") if present[f] and f not in sent]
+               "thumbnail": md.thumbnail is not None, "captions": bool(md.captions), "language": md.language is not None,
+               "localizations": bool(md.localizations), "publish_at": md.publish_at is not None}
+    return [f for f in _OPTIONAL_FIELDS if present[f] and f not in sent]
 
 
-def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
+def metadata_checks(platform_id: str, md: Metadata, duration: Optional[float] = None) -> List[Dict[str, Any]]:
     """The metadata rows. Pure: no file is read except the thumbnail's first bytes and caption files' encoding.
     A field the platform's uploader does not send is one FAIL row, so `upload` refuses it (METADATA_INVALID) instead of
-    dropping part of what the token bound (ADR-005); its other rows are skipped."""
+    dropping part of what the token bound (ADR-005); its other rows are skipped. `duration` (seconds, from ffmpeg-skill,
+    plan only) lets the last chapter's length be checked too (ADR-011)."""
     rows: List[Dict[str, Any]] = []
     platform = get_platform(platform_id)
     unsupported = unsupported_fields(platform_id, md)
@@ -115,11 +158,8 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
                          f"drop {_FIELD_FLAGS[f]}: the {platform.name} uploader sends "
                          f"{', '.join(platform.metadata_fields)} only; add it on {platform.name} after the upload"))
     if unsupported:
-        md = Metadata(title=None if "title" in unsupported else md.title,
-                      description=None if "description" in unsupported else md.description,
-                      tags=[] if "tags" in unsupported else md.tags, privacy=md.privacy,
-                      thumbnail=None if "thumbnail" in unsupported else md.thumbnail,
-                      captions=[] if "captions" in unsupported else md.captions)
+        md = dataclasses.replace(md, **{f: ([] if f in ("tags", "captions") else {} if f == "localizations" else None)
+                                        for f in unsupported})
     # YouTube and Vimeo count characters, TikTok UTF-16 code units ("runes"), X weighted characters (twitter-text):
     # each table has one of the three keys
     by_utf16 = L.value(platform_id, "title.max_utf16_units") is not None
@@ -214,6 +254,100 @@ def metadata_checks(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
             rows.append(_row(f"captions encoding ({name})", "PASS" if utf8 else "FAIL", "utf-8" if utf8 else "not utf-8",
                              "plain UTF-8", platform_id, "captions.plain_utf8_extensions",
                              "" if utf8 else "re-save the captions file as UTF-8"))
+    langs = [str(c.get("language")) for c in md.captions if c.get("language")]
+    dupes = sorted({x for x in langs if langs.count(x) > 1})
+    if dupes:                       # this skill's rule: one track per language, named by its language (ADR-011)
+        rows.append(_row("captions languages", "FAIL", langs, "one caption track per language", platform_id, None,
+                         f"give one --caption per language: {', '.join(dupes)} appear more than once"))
+    rows += _chapter_rows(platform_id, md.description, duration)
+    rows += _schedule_rows(platform_id, md)
+    rows += _localization_rows(platform_id, md)
+    return rows
+
+
+def _chapter_rows(platform_id: str, description: Optional[str], duration: Optional[float]) -> List[Dict[str, Any]]:
+    """YouTube's chapter rules on the description's timestamps (ADR-011). No chapter line, no row."""
+    first, least, shortest = (L.value(platform_id, k) for k in ("chapters.first_at_s", "chapters.min_count",
+                                                                "chapters.min_length_s"))
+    marks = chapters(description)
+    if least is None or not marks:
+        return []
+    rows = []
+    start = marks[0]["seconds"]
+    rows.append(_row("chapters: first timestamp", "PASS" if start == first else "FAIL", _clock(start), _clock(first),
+                     platform_id, "chapters.first_at_s", "" if start == first else
+                     f"the first chapter must start at 0:00 (YouTube: \"Make sure that the first timestamp you list "
+                     f"starts with 00:00.\"); line {marks[0]['line']} starts at {_clock(start)}: add a 0:00 line first"))
+    rows.append(_row("chapters: count", "PASS" if len(marks) >= least else "FAIL", len(marks), least, platform_id,
+                     "chapters.min_count", "" if len(marks) >= least else
+                     f"YouTube needs at least {least} timestamps for chapters: add chapters, or remove the timestamps"))
+    secs = [c["seconds"] for c in marks]
+    ascending = all(a < b for a, b in zip(secs, secs[1:]))
+    rows.append(_row("chapters: ascending order", "PASS" if ascending else "FAIL", [c["text"].split()[0] for c in marks],
+                     "ascending", platform_id, "chapters.min_count", "" if ascending else
+                     "list the timestamps in ascending order, each later than the one before"))
+    if ascending:
+        lengths = [b - a for a, b in zip(secs, secs[1:])]
+        short = [marks[i] for i, n in enumerate(lengths) if n < shortest]
+        if duration is not None and duration - secs[-1] < shortest:
+            short.append(marks[-1])
+        ok = not short
+        rows.append(_row("chapters: length", "PASS" if ok else "FAIL", min(lengths + ([duration - secs[-1]]
+                                                                                   if duration is not None else [])),
+                         shortest, platform_id, "chapters.min_length_s", "" if ok else
+                         f"every chapter must last at least {shortest} s (YouTube: \"The minimum length for video "
+                         f"chapters is 10 seconds.\"): " + ", ".join(f"line {c['line']} ({c['text'][:40]})" for c in short)))
+    return rows
+
+
+def _schedule_rows(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
+    if md.publish_at is None or L.value(platform_id, "schedule.publish_at") is None:
+        return []
+    ok = valid_publish_at(md.publish_at)
+    rows = [_row("scheduled time format", "PASS" if ok else "FAIL", md.publish_at, "RFC 3339 with an offset",
+                 platform_id, "schedule.publish_at", "" if ok else
+                 "give --publish-at as YYYY-MM-DDTHH:MM:SSZ (UTC) or with an offset, e.g. 2026-12-01T09:00:00+09:00")]
+    private = md.privacy == "private"
+    rows.append(_row("scheduled time privacy", "PASS" if private else "FAIL", md.privacy, "private", platform_id,
+                     "schedule.publish_at", "" if private else
+                     "a scheduled video is uploaded private and YouTube makes it public at that time: use --privacy "
+                     "private with --publish-at"))
+    return rows
+
+
+def _localization_rows(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
+    if L.limits_of(platform_id).get("localizations.language") is None or (md.language is None and not md.localizations):
+        return []
+    rows = []
+    if md.language is not None:
+        ok = bool(_BCP47.match(md.language))
+        rows.append(_row("default language", "PASS" if ok else "FAIL", md.language, "BCP-47 language tag", platform_id,
+                         "localizations.language", "" if ok else "give --language as a BCP-47 tag (en, ja, pt-BR)"))
+    if not md.localizations:
+        return rows
+    if md.language is None:
+        rows.append(_row("default language", "FAIL", None, "required with --localizations", platform_id,
+                         "localizations.default_language",
+                         "give --language, the language of --title and --description (YouTube refuses localizations "
+                         "without it: defaultLanguageNotSet)"))
+    max_title, max_desc = L.value(platform_id, "title.max_chars"), L.value(platform_id, "description.max_bytes")
+    forbidden = L.value(platform_id, "title.forbidden_chars") or []
+    for lang, texts in sorted(md.localizations.items()):
+        ok = bool(_BCP47.match(lang))
+        rows.append(_row(f"localization language ({lang})", "PASS" if ok else "FAIL", lang, "BCP-47 language tag",
+                         platform_id, "localizations.language", "" if ok else
+                         "key each localization by a BCP-47 tag (en, ja, pt-BR)"))
+        over = []
+        if max_title is not None and len(texts.get("title", "")) > max_title:
+            over.append(f"title over {max_title} characters")
+        if max_desc is not None and len(texts.get("description", "").encode("utf-8")) > max_desc:
+            over.append(f"description over {max_desc} UTF-8 bytes")
+        bad = _forbidden(texts.get("title", "") + texts.get("description", ""), forbidden)
+        if bad:
+            over.append("contains " + " ".join(bad))
+        rows.append(_row(f"localization text ({lang})", "WARN" if over else "PASS", sorted(texts), "the snippet's own "
+                         "title and description limits (not stated for localizations)", platform_id,
+                         "localizations.text_limits", "; ".join(over) + ": YouTube may refuse it" if over else ""))
     return rows
 
 
@@ -288,7 +422,7 @@ def plan(path: str, platform_id: str, metadata: Metadata = DEFAULT_METADATA,
     delivery = delivery_checks(platform_id, item["path"], ffmpeg_skill_dir)
     rows = (file_checks(platform_id, item["path"], item["size"])
             + duration_checks(platform_id, delivery["duration"], delivery["why"])
-            + metadata_checks(platform_id, metadata) + delivery["rows"])
+            + metadata_checks(platform_id, metadata, delivery["duration"]) + delivery["rows"])
     v = verdict(rows)
     counts = {s.lower(): sum(1 for r in rows if r["status"] == s) for s in STATUSES}
     nxt = {"PASS": "run `publish upload` with the same flags (a dry run) and show the human its confirm_token",

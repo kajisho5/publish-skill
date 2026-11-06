@@ -29,6 +29,10 @@ _YT_HELP_LENGTH = "https://support.google.com/youtube/answer/71673?hl=en"
 _YT_HELP_FORMATS = "https://support.google.com/youtube/troubleshooter/2888402?hl=en"
 _YT_HELP_CAPTIONS = "https://support.google.com/youtube/answer/2734698?hl=en"
 _YT_HELP_THUMBS = "https://support.google.com/youtube/answer/72431?hl=en"
+# Roadmap step 8 (ADR-011): chapters, the scheduled publish time and localized metadata, read on 2026-11-06.
+ACCESSED_STEP8 = "2026-11-06"
+_YT_HELP_CHAPTERS = "https://support.google.com/youtube/answer/9884579?hl=en"
+_YT_ERRORS = "https://developers.google.com/youtube/v3/docs/errors"
 _FFMPEG_CHECK = "ffmpeg-skill `check --platform youtube` (scripts/_platforms.py owns the value)"
 # Vimeo (roadmap step 5, ADR-005): the developer site's guides and the API reference (API 3.4, reference revision
 # 3.4.9), read on the same day.
@@ -177,6 +181,43 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                     required_by=_YT_CAPTIONS + " (snippet.language is a property you must specify)",
                                     checked_as="present, and shaped like a BCP-47 tag (letters, digits and hyphens: "
                                                "en, en-US, zh-Hant, es-419); the platform validates the registry"),
+        # chapters, the scheduled time and localized metadata (roadmap step 8, ADR-011)
+        "chapters.first_at_s": _known(0, "seconds", _YT_HELP_CHAPTERS,
+                                      "Make sure that the first timestamp you list starts with 00:00.",
+                                      accessed=ACCESSED_STEP8,
+                                      checked_as="the description's chapter lines: lines that start with a timestamp "
+                                                 "(M:SS, MM:SS or H:MM:SS, after optional bullets); none, no chapter rows"),
+        "chapters.min_count": _known(3, "timestamps", _YT_HELP_CHAPTERS,
+                                     "Your video should have at least three timestamps listed in ascending order.",
+                                     accessed=ACCESSED_STEP8),
+        "chapters.min_length_s": _known(10, "seconds", _YT_HELP_CHAPTERS,
+                                        "The minimum length for video chapters is 10 seconds.", accessed=ACCESSED_STEP8,
+                                        checked_as="between consecutive timestamps; the last chapter against the "
+                                                   "duration when ffmpeg-skill measured it (plan only)"),
+        "schedule.publish_at": _known("ISO 8601 date and time; only with privacy private", "format", _YT_VIDEOS,
+                                      "The date and time when the video is scheduled to publish. It can be set only if "
+                                      "the privacy status of the video is private.", accessed=ACCESSED_STEP8,
+                                      checked_as="RFC 3339 (YYYY-MM-DDTHH:MM:SS, optional fraction, then Z or an offset "
+                                                 "+HH:MM / -HH:MM: a time without an offset is ambiguous), and --privacy "
+                                                 "private; not checked against the clock (plan is deterministic): a "
+                                                 "past time publishes the video immediately",
+                                      error=_YT_ERRORS + " (invalidPublishAt, 400)"),
+        "localizations.default_language": _known("snippet.defaultLanguage (--language) whenever localizations are sent",
+                                                 "rule", _YT_ERRORS,
+                                                 "defaultLanguageNotSet: The request is trying to add localized video "
+                                                 "details without specifying the default language of the video details.",
+                                                 accessed=ACCESSED_STEP8,
+                                                 field=_YT_VIDEOS + " (snippet.defaultLanguage: The language of the text "
+                                                       "in the video resource's snippet.title and snippet.description "
+                                                       "properties.)"),
+        "localizations.language": _known("BCP-47 language tag", "format", _YT_VIDEOS,
+                                         "localizations.(key): The language of the localized text associated with the "
+                                         "key value.", accessed=ACCESSED_STEP8,
+                                         checked_as="each key, and --language, shaped like a BCP-47 tag (as captions)"),
+        "localizations.text_limits": dict(_unknown("no limit is stated for localizations.(key).title or .description (\"The "
+                                              "localized video title.\", \"The localized video description.\"); plan "
+                                              "WARNs where one breaks the snippet's own title / description limits",
+                                              [_YT_VIDEOS, _YT_INSERT]), accessed=ACCESSED_STEP8),
         # API quota: what one upload costs. Reported, not checked (plan cannot see the project's remaining quota).
         "quota.videos_insert": _known("100 calls per day; 1 unit each in the Video Uploads quota bucket", "quota", _YT_INSERT,
                                       "Quota impact: 100 calls per day. A call to this method has a quota cost of 1 unit in "

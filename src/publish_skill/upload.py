@@ -34,7 +34,8 @@ from .platforms import UploadRequest, get_platform
 
 TOKEN_PREFIX = "confirm-"
 TOKEN_BINDS = ["platform", "deliverable sha256", "deliverable size", "title", "description", "tags", "privacy",
-               "thumbnail sha256 and size", "captions sha256, size and language, in order"]
+               "thumbnail sha256 and size", "captions sha256, size and language, in order",
+               "language, localizations and scheduled publish time, when set (ADR-011)"]
 __all__ = ["TOKEN_PREFIX", "TOKEN_BINDS", "confirm_token", "sha256_file", "upload"]
 
 
