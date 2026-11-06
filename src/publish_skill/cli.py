@@ -26,6 +26,7 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
+            [--language LANG] [--localizations FILE] [--publish-at RFC3339]   (YouTube; ADR-011)
             (the same flags on plan and upload; the token binds them)"""
 from __future__ import annotations
 
@@ -57,12 +58,19 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--caption", action="append", dest="captions", metavar="FILE", help="a captions file (repeat for more)")
     g.add_argument("--caption-language", action="append", dest="caption_languages", metavar="LANG",
                    help="the BCP-47 language of each --caption, in the same order (e.g. en, ja, es-419)")
+    g.add_argument("--language", metavar="LANG", help="the BCP-47 language of --title and --description (YouTube: "
+                   "snippet.defaultLanguage; required with --localizations)")
+    g.add_argument("--localizations", metavar="FILE", help='UTF-8 JSON file of translated titles and descriptions: '
+                   '{"ja": {"title": "...", "description": "..."}, ...} (YouTube)')
+    g.add_argument("--publish-at", metavar="TIME", help="scheduled publish time, RFC 3339 with an offset, e.g. "
+                   "2026-12-01T09:00:00Z (YouTube; needs --privacy private)")
 
 
 def _metadata(args: argparse.Namespace):
     return build(title=args.title, description=args.description, description_file=args.description_file, tags=args.tags,
                  privacy=args.privacy, thumbnail=args.thumbnail, captions=args.captions,
-                 caption_languages=args.caption_languages)
+                 caption_languages=args.caption_languages, language=args.language,
+                 localizations_file=args.localizations, publish_at=args.publish_at)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,6 +154,10 @@ def _human(doc: Dict[str, Any]) -> None:
             print("  thumbnail set")
         for c in r.get("captions") or []:
             print(f"  captions {c['language']} added")
+        if r.get("publish_at"):
+            print(f"  scheduled to publish at {r['publish_at']}")
+        if r.get("localizations"):
+            print(f"  localized title/description: {', '.join(r['localizations'])}")
         for w in r.get("warnings") or []:
             print(f"  - {w}")
     elif "dry_run" in doc:

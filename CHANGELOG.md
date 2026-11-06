@@ -2,6 +2,12 @@
 
 ## 0.1.0 - unreleased
 
+Chapters, a scheduled time and captions per language (roadmap step 8).
+
+- ADR-011: `--language` (snippet.defaultLanguage), `--localizations FILE` (translated titles and descriptions, a UTF-8 JSON object keyed by BCP-47 tag) and `--publish-at` (status.publishAt, RFC 3339 with an offset, privacy `private` only) on `plan` and `upload`, sent by the YouTube uploader in the `videos.insert` resource and refused by every other platform before a token. The token binds them only when set, so earlier tokens are unchanged.
+- `plan` checks description chapters against YouTube's rules (first at 0:00, at least three, ascending, each at least 10 s, the last against the measured duration), the schedule's format and privacy, localizations without a default language, and refuses captions that repeat a language (one track per language). Cited from YouTube's help and API pages, read 2026-11-06.
+- Tested only against the in-process mock (which now refuses `defaultLanguageNotSet` and `invalidPublishAt` cases); no real upload has been made.
+
 The Instagram Reels uploader (roadmap step 5, the sixth and last further platform; step 5 is done).
 
 - ADR-010: `publish upload --platform reels --confirm <token>` creates a REELS container with `upload_type=resumable` (`POST graph.facebook.com/v26.0/<IG_ID>/media`), uploads the file to `rupload.facebook.com/ig-api-upload/v26.0/<container>` (`Authorization: OAuth`, `offset: 0`, `file_size`, streamed), queries `status_code` once a minute for at most five minutes until `FINISHED`, then makes one `media_publish`. The account id and an access token from Facebook Login for Business (`PUBLISH_INSTAGRAM_USER_ID`, `PUBLISH_INSTAGRAM_ACCESS_TOKEN`), environment or keychain. Standard library only, in `platforms/reels.py`, the seventh module with network code.

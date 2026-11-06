@@ -17,7 +17,8 @@ from .upload import TOKEN_BINDS, TOKEN_PREFIX
 
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
                   "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
-                  "[--caption <file> ... --caption-language <bcp47> ...]"]
+                  "[--caption <file> ... --caption-language <bcp47> ...]",
+                  "[--language <bcp47>]", "[--localizations <json file>]", "[--publish-at <rfc3339>]"]
 # the only modules with network code: one per implemented uploader (ADR-004 .. ADR-010)
 NETWORK_MODULES = ["src/publish_skill/platforms/facebook.py", "src/publish_skill/platforms/linkedin.py",
                    "src/publish_skill/platforms/reels.py", "src/publish_skill/platforms/tiktok.py",
@@ -28,7 +29,8 @@ CONTRACT_VERSION = "1.0"
 CAPABILITY_IDS = {"plan": "publish.plan", "upload": "publish.upload"}
 _OP_TOOLS = {
     "plan": {"role": "measurement", "network": False, "writes_media": False,
-             "description": "Check a deliverable and its title / description / tags / privacy / thumbnail / captions against "
+             "description": "Check a deliverable and its title / description / tags / privacy / thumbnail / captions (and, on "
+                            "YouTube, description chapters, the scheduled time and localized metadata) against "
                             "the platform's upload limits, and the deliverable against ffmpeg-skill's delivery spec "
                             "(`check`), offline (structured FAIL with a fix per row, nothing uploaded; exit 1 unless the "
                             "verdict is PASS or WARN)",
@@ -167,6 +169,9 @@ def contract() -> Dict[str, Any]:
                           "oauth": "refresh token -> access token (https://oauth2.googleapis.com/token)",
                           "resumable": "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
                           "methods": ["videos.insert", "thumbnails.set", "captions.insert"],
+                          "metadata_sent": ["snippet.title", "snippet.description", "snippet.tags",
+                                            "snippet.defaultLanguage", "localizations", "status.privacyStatus",
+                                            "status.publishAt", "one caption track per language"],
                           "chunk_bytes": "a multiple of 256 KiB (8 MiB)",
                           "retries": "5xx, 429, rate-limit reasons, connection errors and timeouts: exponential backoff "
                                      "(or Retry-After), then the session's status and a resume",

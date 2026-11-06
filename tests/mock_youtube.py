@@ -8,7 +8,10 @@ What it implements, as the resumable upload guide describes it:
                                                 200 and Location: the session URI (carries upload_id)
   PUT  <session URI>, Content-Range: bytes A-B/T
                                                 308 and Range: bytes=0-N while incomplete; 201 (videos) or 200 and the
-                                                resource when the last byte arrives; chunks must be contiguous and,
+                                                resource when the last byte arrives (videos.insert: `part` names
+                                                exactly the parts sent; localizations need snippet.defaultLanguage,
+                                                defaultLanguageNotSet; status.publishAt needs privacyStatus private,
+                                                invalidPublishAt: ADR-011); chunks must be contiguous and,
                                                 except the last, a multiple of 256 KiB
   PUT  <session URI>, Content-Range: bytes */T  the status: 308 (Range, or none when nothing arrived) or the resource
 
@@ -173,6 +176,12 @@ class MockYouTube:
         resource = json.loads(body.decode("utf-8")) if body else None
         if method == "videos" and (query.get("part") is None or resource is None):
             return self._send(h, 400, google_error(400, "badRequest", "videos.insert needs part and a resource"))
+        if method == "videos" and set(query["part"].split(",")) != set(resource):
+            return self._send(h, 400, google_error(400, "badRequest", "part must name exactly the parts sent"))
+        if method == "videos" and resource.get("localizations") and not (resource.get("snippet") or {}).get("defaultLanguage"):
+            return self._send(h, 400, google_error(400, "defaultLanguageNotSet"))
+        if method == "videos" and "publishAt" in resource["status"] and resource["status"].get("privacyStatus") != "private":
+            return self._send(h, 400, google_error(400, "invalidPublishAt"))
         if method == "thumbnails" and query.get("videoId") not in self.videos:
             return self._send(h, 404, google_error(404, "videoNotFound"))
         if method == "captions" and ((resource or {}).get("snippet") or {}).get("videoId") not in self.videos:
