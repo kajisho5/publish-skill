@@ -13,6 +13,7 @@ from .errors import ERROR_TABLE
 from .limits import LIMITS
 from .plan import PLAN_SCHEMA, STATUSES
 from .platforms import get_platform, platform_ids
+from .series import SERIES_SCHEMA, STATE_SCHEMA
 from .upload import TOKEN_BINDS, TOKEN_PREFIX
 
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
@@ -55,6 +56,18 @@ def tools() -> list:
         out.append({"tool_id": f"{SKILL_ID}/{op}", "mutates_input": False, "deterministic": op == "plan",
                     "implemented": IMPLEMENTED_OPS[op], "roadmap_step": OP_STEP[op], **spec})
     out[-1]["uploaders"] = {pid: get_platform(pid).implemented for pid in platform_ids()}
+    out.append({"tool_id": f"{SKILL_ID}/series", "capability": CAPABILITY_IDS["upload"], "role": "execution",
+                "network": True, "writes_media": False, "mutates_input": False, "deterministic": False,
+                "implemented": True, "roadmap_step": 9, "schema": SERIES_SCHEMA, "state_schema": STATE_SCHEMA,
+                "description": "Upload the clips a manifest lists (Shorts / Reels cut from one source), in order, each "
+                               "with its own title, a link back to the full video and its own confirmation token (the "
+                               "same gate as upload); a state file makes a re-run resume at the first clip not "
+                               "uploaded and never sends a clip twice; a clip with an unknown outcome blocks the series "
+                               "until a human resolves it. Dry run unless --confirm",
+                "argv": ["series", "<manifest.json>", "--platform <id>", "[--confirm <token> ...]", "[--state <file>]",
+                         "[--resolve <n>=uploaded|not-uploaded]", "--json"],
+                "writes": "the state file only (default <manifest>.publish-state.json): ids, URLs, sha256 and tokens; "
+                          "no credential", "decision": "docs/decisions.md ADR-012"})
     out += [
         {"tool_id": f"{SKILL_ID}/doctor", "role": "diagnostic", "network": False, "writes_media": False, "mutates_input": False,
          "deterministic": False, "implemented": True, "schema": DOCTOR_SCHEMA,
@@ -107,7 +120,8 @@ def contract() -> Dict[str, Any]:
                          "keyring backends other than the three OS keychains (plain files, plug-ins, network stores)",
                          "obtaining an OAuth refresh token (the consent screen needs the network; `auth login` stores one)",
                          "uploading without --confirm",
-                         "resuming an upload in a later run (an interrupted run uploads nothing; run it again)",
+                         "resuming an upload in a later run (an interrupted run uploads nothing; run it again); "
+                         "`series` resumes at the first clip not uploaded, never inside one",
                          "an HTTP(S) proxy for the upload (direct connections only in this release)",
                          "Vimeo: tags, thumbnails and text tracks (refused before a token is printed; add them on Vimeo)",
                          "Vimeo: the OAuth authorization-code flow (`auth login` stores a personal access token)",
@@ -140,7 +154,8 @@ def contract() -> Dict[str, Any]:
                       "per_platform_pr": "roadmap step 5"},
         "upload_limits": {"owner": SKILL_ID, "delivery_spec_owner": "ffmpeg-skill", "decision": "docs/decisions.md ADR-002",
                           "platforms": LIMITS},
-        "confirmation": {"required_for": [f"{SKILL_ID}/upload"], "flag": "--confirm", "token_prefix": TOKEN_PREFIX,
+        "confirmation": {"required_for": [f"{SKILL_ID}/upload", f"{SKILL_ID}/series"],
+                         "series": "one token per clip, each from the series dry run; clips without one are not sent", "flag": "--confirm", "token_prefix": TOKEN_PREFIX,
                          "token_binds": list(TOKEN_BINDS),
                          "default": "dry run (no network, nothing uploaded)",
                          "from_environment_or_config": False,
@@ -155,7 +170,7 @@ def contract() -> Dict[str, Any]:
                                      "write_input": "stdin or a prompt that does not echo, never argv"},
                         "decision": "docs/decisions.md ADR-001, ADR-003"},
         "execution": {"canonical_invocation": ["publish", "<command>", "...", "--json"], "network": True,
-                      "network_tools": [f"{SKILL_ID}/upload"], "network_requires": "--confirm <token>",
+                      "network_tools": [f"{SKILL_ID}/upload", f"{SKILL_ID}/series"], "network_requires": "--confirm <token>",
                       "network_in_this_release": True, "network_code": list(NETWORK_MODULES),
                       "network_hosts": ["oauth2.googleapis.com", "www.googleapis.com", "api.vimeo.com",
                                         "*.vimeo.com (the tus upload link Vimeo returns; https only)",

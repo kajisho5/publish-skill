@@ -192,6 +192,22 @@ Protocol read from Meta's developer documentation (Graph API v26.0) on 2026-10-3
 
 A reel published through the API is public on the account, so `--privacy public` must be given (`plan` FAILs the default `private`). A description, tags, a thumbnail and captions files are refused before a token is printed, and so is a file that is not `.mp4` or `.mov`. A cover, `thumb_offset`, collaborators, a location, an audio name and `share_to_feed` are not sent (Instagram's defaults apply). The token is not refreshed.
 
+## `publish series`: clips in order ([ADR-012](docs/decisions.md))
+
+A set of Shorts or Reels cut from one source, uploaded in order, each with its own title and a link back to the full video:
+
+```json
+{"full_video_url": "https://www.youtube.com/watch?v=...", "link_label": "Full video", "privacy": "public",
+ "clips": [{"file": "clip-01.mp4", "title": "Highlight 1", "description": "..."},
+           {"file": "clip-02.mp4", "title": "Highlight 2"}]}
+```
+
+- `publish series clips.json --platform youtube --json` is a dry run: every clip goes through `upload`'s gate (refusals first) and gets its own `confirm_token`. The link back is the line `<link_label>: <url>` after the description, or after the title where the platform sends no description (Instagram Reels, TikTok, X, LinkedIn); `link_label` defaults to English and can be any language. Paths are relative to the manifest.
+- `--confirm <token>` (repeat, one per approved clip) uploads the approved clips in order and stops at the first clip without a token. A token that matches no clip is refused before anything is sent.
+- A state file (`<manifest>.publish-state.json`, or `--state`) records each clip: `sending`, then `uploaded` (id, URL, privacy, sha256), or removed when nothing was published. Running the same command again skips uploaded clips and resumes at the first one that is not, so no clip is sent twice. A clip whose file or metadata changed after it was uploaded is never sent again.
+- An unknown outcome (a lost publish answer, an interrupted process) leaves the clip `uncertain`, and the series stops there (`UPLOAD_PARTIAL`) until a human checks the platform and runs `--resolve N=uploaded` or `--resolve N=not-uploaded`.
+- The state holds no credential, session URI or upload link.
+
 ## Credentials ([ADR-003](docs/decisions.md))
 
 - **Two sources, the environment first.** If any of a platform's variables is set in the environment, the environment is that platform's only source and the keychain is not consulted; otherwise the OS keychain is. One platform's values never mix sources (a refresh token belongs to the OAuth client that issued it).

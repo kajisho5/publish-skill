@@ -23,6 +23,9 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
                                                    Vimeo, TikTok, X, LinkedIn, Facebook, Instagram Reels: resumable or
                                                    chunked uploads;
                                                    prints a receipt)
+  publish series MANIFEST --platform ID [--confirm TOKEN ...] [--state FILE] [--resolve N=uploaded|not-uploaded] --json
+                                                   clips from one source, in order, each with its own token; a state
+                                                   file makes a re-run resume without sending any clip twice (ADR-012)
 
   METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
@@ -44,6 +47,7 @@ from .errors import PublishError
 from .metadata import DEFAULT_PRIVACY, build
 from .plan import plan
 from .platforms import get_platform
+from .series import series
 from .upload import upload
 
 
@@ -112,6 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--ffmpeg-skill", help="ffmpeg-skill checkout directory (default: env / ~/.claude/skills/ffmpeg-skill / ./vendor / ..)")
     pl.add_argument("--json", action="store_true")
     _metadata_args(pl)
+    se = sub.add_parser("series", help="upload clips listed in a manifest, in order, each with its own confirmation "
+                        "token; dry run unless --confirm")
+    se.add_argument("manifest", help="UTF-8 JSON: {full_video_url?, link_label?, privacy?, clips: [{file, title, ...}]}")
+    se.add_argument("--platform", required=True)
+    se.add_argument("--confirm", action="append", metavar="TOKEN",
+                    help="the confirm_token of one approved clip (repeat for more)")
+    se.add_argument("--state", metavar="FILE", help="the series state file (default: <manifest>.publish-state.json)")
+    se.add_argument("--resolve", action="append", metavar="N=OUTCOME",
+                    help="after checking the platform: N=uploaded or N=not-uploaded for an uncertain clip")
+    se.add_argument("--json", action="store_true")
     return ap
 
 
@@ -146,6 +160,14 @@ def _human(doc: Dict[str, Any]) -> None:
             print(f"  platform {pid:10} implemented={p['implemented']} ready={p['ready']}  {vars_}")
         for w in doc["warnings"] + doc["problems"]:
             print(f"  - {w}")
+    elif str(doc.get("schema", "")).endswith("/series@1"):
+        print(f"series {doc['manifest']} to {doc['platform']['name']}: "
+              + ("dry run, nothing sent" if doc["dry_run"] else f"uploaded now {doc['uploaded_now'] or 'none'}"))
+        for r in doc["clips"]:
+            res = r.get("result") or {}
+            print(f"  clip {r['index']}: {r.get('outcome') or r['state']}"
+                  + (f" {res.get('url') or res.get('video_id')}" if res else f"  token {r['confirm_token']}"))
+        print(f"  {doc['next_step']}")
     elif doc.get("uploaded") and "result" in doc:
         r = doc["result"]
         print(f"uploaded {doc['input']['path']} to {doc['platform']['name']}: video {r['video_id']} (privacy {r['privacy']})"
@@ -208,6 +230,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 _emit(auth.login(args.platform, args.variables), as_json)
             else:
                 _emit(auth.logout(args.platform, args.variables), as_json)
+            return 0
+        if args.cmd == "series":
+            _emit(series(args.manifest, args.platform, confirm=args.confirm, state_path=args.state,
+                         resolve=args.resolve), as_json)
             return 0
         if args.cmd in ("upload", "plan"):
             get_platform(args.platform)                       # UNKNOWN_PLATFORM before any file is read
