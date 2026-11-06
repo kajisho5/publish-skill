@@ -23,11 +23,14 @@ status is `fail`; plan exits 1 when its verdict is FAIL or INCOMPLETE; an error 
                                                    Vimeo, TikTok, X, LinkedIn, Facebook, Instagram Reels: resumable or
                                                    chunked uploads;
                                                    prints a receipt)
-  publish series MANIFEST --platform ID [--confirm TOKEN ...] [--state FILE] [--resolve N=uploaded|not-uploaded] --json
+  publish series MANIFEST --platform ID [--confirm TOKEN ...] [--state FILE] [--resolve N=uploaded|not-uploaded]
+                 [--receipt FILE] --json
                                                    clips from one source, in order, each with its own token; a state
                                                    file makes a re-run resume without sending any clip twice (ADR-012)
 
-  METADATA: [--title T] [--description D | --description-file F] [--tag T ...] [--privacy private|unlisted|public]
+  METADATA: [--title T] [--description D | --description-file F] [--tag T ...]
+            [--privacy private|unlisted|public|password|domains]  (password, domains: Vimeo; ADR-013)
+            [--embed-domain DOMAIN ...]
             [--thumbnail IMAGE] [--caption FILE ... --caption-language LANG ...]
             [--language LANG] [--localizations FILE] [--publish-at RFC3339]   (YouTube; ADR-011)
             (the same flags on plan and upload; the token binds them)"""
@@ -57,7 +60,8 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--description")
     g.add_argument("--description-file", metavar="FILE", help="UTF-8 text file holding the description")
     g.add_argument("--tag", action="append", dest="tags", metavar="TAG", help="one tag (repeat for more)")
-    g.add_argument("--privacy", help=f"private | unlisted | public (default: {DEFAULT_PRIVACY})")
+    g.add_argument("--privacy", help=f"private | unlisted | public (default: {DEFAULT_PRIVACY}); Vimeo also: password "
+                   "(the password from PUBLISH_VIMEO_VIDEO_PASSWORD) | domains (embed only, on --embed-domain)")
     g.add_argument("--thumbnail", metavar="IMAGE")
     g.add_argument("--caption", action="append", dest="captions", metavar="FILE", help="a captions file (repeat for more)")
     g.add_argument("--caption-language", action="append", dest="caption_languages", metavar="LANG",
@@ -66,6 +70,8 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
                    "snippet.defaultLanguage; required with --localizations)")
     g.add_argument("--localizations", metavar="FILE", help='UTF-8 JSON file of translated titles and descriptions: '
                    '{"ja": {"title": "...", "description": "..."}, ...} (YouTube)')
+    g.add_argument("--embed-domain", action="append", dest="embed_domains", metavar="DOMAIN",
+                   help="with --privacy domains (Vimeo): a domain the video may be embedded on (repeat for more)")
     g.add_argument("--publish-at", metavar="TIME", help="scheduled publish time, RFC 3339 with an offset, e.g. "
                    "2026-12-01T09:00:00Z (YouTube; needs --privacy private)")
 
@@ -74,7 +80,7 @@ def _metadata(args: argparse.Namespace):
     return build(title=args.title, description=args.description, description_file=args.description_file, tags=args.tags,
                  privacy=args.privacy, thumbnail=args.thumbnail, captions=args.captions,
                  caption_languages=args.caption_languages, language=args.language,
-                 localizations_file=args.localizations, publish_at=args.publish_at)
+                 localizations_file=args.localizations, publish_at=args.publish_at, embed_domains=args.embed_domains)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,6 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     se.add_argument("--state", metavar="FILE", help="the series state file (default: <manifest>.publish-state.json)")
     se.add_argument("--resolve", action="append", metavar="N=OUTCOME",
                     help="after checking the platform: N=uploaded or N=not-uploaded for an uncertain clip")
+    se.add_argument("--receipt", metavar="FILE", help="write the delivery receipt (URL, privacy, sha256 per item) after "
+                    "a confirmed run: JSON, or CSV when FILE ends in .csv (ADR-013)")
     se.add_argument("--json", action="store_true")
     return ap
 
@@ -233,7 +241,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
         if args.cmd == "series":
             _emit(series(args.manifest, args.platform, confirm=args.confirm, state_path=args.state,
-                         resolve=args.resolve), as_json)
+                         resolve=args.resolve, receipt_path=args.receipt), as_json)
             return 0
         if args.cmd in ("upload", "plan"):
             get_platform(args.platform)                       # UNKNOWN_PLATFORM before any file is read

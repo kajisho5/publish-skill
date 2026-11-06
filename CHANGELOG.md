@@ -2,6 +2,13 @@
 
 ## 0.1.0 - unreleased
 
+Restricted delivery for organisers (roadmap step 10).
+
+- ADR-013: Vimeo `--privacy password` (privacy.view `password`; the password is an optional credential, `PUBLISH_VIMEO_VIDEO_PASSWORD`, environment or keychain, at most 32 characters, redacted, never bound in the token or written to a receipt) and `--privacy domains --embed-domain DOMAIN` (privacy.view `disable`, privacy.embed `whitelist`, one `PUT /videos/{id}/privacy/domains/{domain}` per domain; a failed domain is `UPLOAD_PARTIAL`). Cited from the Vimeo API reference 3.4.9, read 2026-11-06.
+- `publish series` takes `sessions` as well as `clips` (each with an optional `id`) and `--receipt FILE` writes the organiser's delivery receipt after every confirmed run: per session its URL, privacy, who can watch it and the sha256 and size of the uploaded file, as JSON or CSV (UTF-8, a header row).
+- Uploaders can declare optional credentials (`optional_credential_env`): read from the platform's credential source when present, reported as present / absent, stored only by `auth login --variable`.
+- Mock-tested only (YouTube: three sessions, unlisted and private, and a receipt with three URLs; Vimeo: password, domains, a failed domain, a mixed series); no real upload has been made.
+
 Clips as a series (roadmap step 9).
 
 - ADR-012: `publish series MANIFEST --platform ID` uploads the clips a manifest lists (Shorts / Reels cut from one source) in order, each with its own title, a link back to the full video (`<link_label>: <url>`, after the description or, where none is sent, the title) and its own confirmation token from the series dry run. Every clip goes through `upload`'s gate unchanged.

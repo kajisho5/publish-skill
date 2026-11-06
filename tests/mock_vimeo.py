@@ -11,9 +11,12 @@ What it implements, as Vimeo's upload guide and the tus protocol describe it:
                                      (else 415), Upload-Offset equal to the bytes held (else 409)
                                      -> 204, Upload-Offset: the new offset
   HEAD /tus/<id>                     Tus-Resumable: 1.0.0 -> 200, Upload-Offset, Upload-Length, Cache-Control: no-store
+  PUT /videos/<id>/privacy/domains/<domain>
+                                     Authorization: bearer <token> -> 204 and the domain on the video's allowlist; 403
+                                     when the video's privacy.embed is not `whitelist` (ADR-013)
   an unknown or expired upload id    -> 404
 
-Faults are scripted per request kind ("create", "patch", "head"): `faults[kind]` is a list consumed one entry per
+Faults are scripted per request kind ("create", "patch", "head", "domain"): `faults[kind]` is a list consumed one entry per
 request, each one of
   None                                  answer normally
   ("status", code, error_code, headers) answer with that status and a Vimeo error body (error_code may be None)
@@ -57,6 +60,7 @@ class MockVimeo:
         self.requests: List[Dict[str, Any]] = []      # every request: kind, method, path, headers, body length
         self.videos: Dict[str, Dict[str, Any]] = {}   # completed: video id -> {"body", "data"}
         self.created: List[Dict[str, Any]] = []       # every create body (placeholders included)
+        self.domains: Dict[str, List[str]] = {}       # video id -> its embed allowlist, in the order added
         self.lock = threading.Lock()
         self.server: Optional[ThreadingHTTPServer] = None
 
@@ -73,6 +77,9 @@ class MockVimeo:
 
             def do_PATCH(self) -> None:
                 mock._handle(self, "PATCH")
+
+            def do_PUT(self) -> None:
+                mock._handle(self, "PUT")
 
             def do_HEAD(self) -> None:
                 mock._handle(self, "HEAD")
@@ -123,6 +130,8 @@ class MockVimeo:
             kind = "patch"
         elif method == "HEAD" and path.startswith("/tus/"):
             kind = "head"
+        elif method == "PUT" and path.startswith("/videos/") and "/privacy/domains/" in path:
+            kind = "domain"
         else:
             kind = "unknown"
         with self.lock:
@@ -148,6 +157,9 @@ class MockVimeo:
             return self._create(h, headers, h.rfile.read(length))
         if kind in ("patch", "head"):
             return self._tus(h, kind, path[len("/tus/"):], headers, length, fault)
+        if kind == "domain":
+            h.rfile.read(length)
+            return self._domain(h, path, headers)
         h.rfile.read(length)
         return self._send(h, 404, vimeo_error(None, "unknown endpoint"), head=method == "HEAD")
 
@@ -178,6 +190,22 @@ class MockVimeo:
             self.upload_links.append(link)
             self.uploads[upload_id] = {"size": int(up["size"]), "data": bytearray(), "video": vid, "body": body}
         return self._send(h, self.create_status, json.dumps(doc).encode())
+
+    def _domain(self, h: BaseHTTPRequestHandler, path: str, headers: Dict[str, str]) -> None:
+        from urllib.parse import unquote
+        if headers.get("authorization") != "bearer " + self.token:
+            return self._send(h, 401, vimeo_error(8003, "the access token is missing or not recognised"))
+        vid, domain = path[len("/videos/"):].split("/privacy/domains/", 1)
+        body = next((b for i, b in enumerate(self.created) if str(100000000 + i) == vid), None)
+        if body is None:
+            return self._send(h, 404, vimeo_error(5000, "no such video"))
+        if (body.get("privacy") or {}).get("embed") != "whitelist":
+            return self._send(h, 403, vimeo_error(3200, "The video doesn't have a user-defined access list."))
+        with self.lock:
+            lst = self.domains.setdefault(vid, [])
+            if unquote(domain) not in lst:
+                lst.append(unquote(domain))
+        return self._send(h, 204, b"")
 
     def _tus(self, h: BaseHTTPRequestHandler, kind: str, upload_id: str, headers: Dict[str, str], length: int,
              fault: Any) -> None:

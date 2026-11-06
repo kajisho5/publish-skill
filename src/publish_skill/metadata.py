@@ -12,6 +12,10 @@ without them is unchanged): `language` (the language of the title and descriptio
 gives: {"ja": {"title": "...", "description": "..."}}) and `publish_at` (a scheduled publish time, RFC 3339 / ISO 8601
 with an explicit offset, e.g. 2026-12-01T09:00:00Z; YouTube's status.publishAt, which needs privacy `private`).
 
+Roadmap step 10 (ADR-013) adds `embed_domains`, the domains a Vimeo video with privacy `domains` may be embedded on
+(bound only when set). Vimeo's `password` privacy binds the privacy name, not the password: the password is a
+credential (PUBLISH_VIMEO_VIDEO_PASSWORD, environment or keychain), never in a token, a flag or an output.
+
 Privacy defaults to `private`. The YouTube API defaults to `public` when the field is left out; this skill never
 leaves it out, so a forgotten flag cannot publish a video to everyone."""
 from __future__ import annotations
@@ -63,12 +67,13 @@ class Metadata:
     language: Optional[str] = None                                  # of the title and description (ADR-011)
     localizations: Dict[str, Dict[str, str]] = field(default_factory=dict)   # BCP-47 tag -> {"title", "description"}
     publish_at: Optional[str] = None                                # RFC 3339, as given (ADR-011)
+    embed_domains: List[str] = field(default_factory=list)          # Vimeo privacy `domains` (ADR-013)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"title": self.title, "description": self.description, "tags": list(self.tags), "privacy": self.privacy,
                 "thumbnail": dict(self.thumbnail) if self.thumbnail else None, "captions": [dict(c) for c in self.captions],
                 "language": self.language, "localizations": {k: dict(v) for k, v in self.localizations.items()},
-                "publish_at": self.publish_at}
+                "publish_at": self.publish_at, "embed_domains": list(self.embed_domains)}
 
     def canonical(self) -> str:
         """The text the confirmation token hashes: every field, files by content (sha256, size) and never by path,
@@ -83,6 +88,8 @@ class Metadata:
             doc["localizations"] = {k: dict(v) for k, v in self.localizations.items()}
         if self.publish_at is not None:
             doc["publish_at"] = self.publish_at
+        if self.embed_domains:                                       # ADR-013, likewise only when set
+            doc["embed_domains"] = list(self.embed_domains)
         return json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -93,7 +100,7 @@ def build(title: Optional[str] = None, description: Optional[str] = None, descri
           tags: Optional[Sequence[str]] = None, privacy: Optional[str] = None, thumbnail: Optional[str] = None,
           captions: Optional[Sequence[str]] = None, caption_languages: Optional[Sequence[str]] = None,
           language: Optional[str] = None, localizations_file: Optional[str] = None,
-          publish_at: Optional[str] = None) -> Metadata:
+          publish_at: Optional[str] = None, embed_domains: Optional[Sequence[str]] = None) -> Metadata:
     """Metadata from the command-line flags. Values are taken as given (an invalid privacy or an over-long title is
     for `plan` to report, and for `upload` to refuse); only a missing file, or a --caption-language count that does not
     match the --caption count, is an error here."""
@@ -118,6 +125,7 @@ def build(title: Optional[str] = None, description: Optional[str] = None, descri
                     language=None if language is None else str(language),
                     localizations=read_localizations(localizations_file) if localizations_file is not None else {},
                     publish_at=None if publish_at is None else str(publish_at),
+                    embed_domains=[str(d) for d in (embed_domains or [])],
                     privacy=DEFAULT_PRIVACY if privacy is None else str(privacy),
                     thumbnail=file_facts(thumbnail, "thumbnail") if thumbnail is not None else None,
                     captions=[dict(file_facts(c, "captions"),

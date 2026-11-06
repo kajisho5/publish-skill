@@ -23,8 +23,9 @@ from .platforms import get_platform, platform_ids
 
 
 def _names(platform_id: str, variables: Optional[Sequence[str]]) -> List[str]:
-    allowed = get_platform(platform_id).credential_env              # UNKNOWN_PLATFORM first
-    names = list(variables) if variables else list(allowed)
+    platform = get_platform(platform_id)                             # UNKNOWN_PLATFORM first
+    allowed = platform.credential_env + platform.optional_credential_env   # optional ones by --variable (ADR-013)
+    names = list(variables) if variables else list(platform.credential_env)
     unknown = [n for n in names if n not in allowed]
     if unknown:
         raise PublishError("INVALID_ARGUMENT", f"not a {platform_id} credential variable: {', '.join(unknown)}",
