@@ -37,7 +37,7 @@ import random
 import ssl
 import time
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from ..errors import PublishError
 from .base import Uploader, UploadRequest
@@ -48,7 +48,11 @@ ACCEPT = "application/vnd.vimeo.*+json;version=3.4"
 TUS_VERSION = "1.0.0"
 TUS_CONTENT_TYPE = "application/offset+octet-stream"
 DEFAULT_CHUNK = 128 * 1024 * 1024              # within the guide's "128–512 MB" under either reading of MB
-PRIVACY_VIEW = {"private": "nobody", "unlisted": "unlisted", "public": "anybody"}
+PRIVACY_VIEW = {"private": "nobody", "unlisted": "unlisted", "public": "anybody", "password": "password",
+                "domains": "disable"}              # ADR-013: password, and embed-only on the allowlisted domains
+PASSWORD_ENV = "PUBLISH_VIMEO_VIDEO_PASSWORD"
+PASSWORD_MAX_CHARS = 32                         # "This field can hold a maximum of 32 characters." (Edit a video)
+DOMAINS_PATH = "/videos/{id}/privacy/domains/{domain}"
 RETRIABLE_STATUS = (429, 500, 502, 503, 504)
 GONE_STATUS = (403, 404, 410)                  # tus: "404 Not Found, 410 Gone or 403 Forbidden" for a missing upload
 RATE_LIMIT_CODE = 9000                         # 429, error code 9000 (rate limiting guide)
@@ -75,13 +79,15 @@ def _hold(value: str) -> None:
     credentials.hold(value)
 
 
-def create_body(metadata: Dict[str, Any], size: int) -> Dict[str, Any]:
+def create_body(metadata: Dict[str, Any], size: int, password: str = "") -> Dict[str, Any]:
     """The POST /me/videos body for the bound metadata: the tus approach and size, then exactly the bound name,
-    description and privacy.view. A field the metadata leaves unset is left out; nothing is added."""
+    description and privacy.view. A field the metadata leaves unset is left out; nothing is added. ADR-013: privacy
+    `password` adds the password (the credential, given by the caller), privacy `domains` sends privacy.view `disable`
+    (embed only, hidden on Vimeo) with privacy.embed `whitelist`; the domains themselves are separate requests."""
     privacy = metadata["privacy"]
     if privacy not in PRIVACY_VIEW:
         raise PublishError("INVALID_ARGUMENT", f"privacy {privacy!r} is not one of {', '.join(PRIVACY_VIEW)}")
-    for field in ("tags", "thumbnail", "captions"):
+    for field in ("tags", "thumbnail", "captions", "language", "localizations", "publish_at"):
         if metadata.get(field):
             raise PublishError("INVALID_ARGUMENT", f"the Vimeo uploader does not send {field}; nothing was uploaded")
     body: Dict[str, Any] = {"upload": {"approach": "tus", "size": str(size)}}
@@ -90,6 +96,16 @@ def create_body(metadata: Dict[str, Any], size: int) -> Dict[str, Any]:
     if metadata.get("description") is not None:
         body["description"] = metadata["description"]
     body["privacy"] = {"view": PRIVACY_VIEW[privacy]}
+    if privacy == "password":
+        if not password:
+            raise PublishError("INTERNAL_ERROR", "privacy password without a password")
+        body["password"] = password
+    if privacy == "domains":
+        if not metadata.get("embed_domains"):
+            raise PublishError("INVALID_ARGUMENT", "privacy domains needs at least one embed domain")
+        body["privacy"]["embed"] = "whitelist"
+    elif metadata.get("embed_domains"):
+        raise PublishError("INVALID_ARGUMENT", "embed domains go with privacy domains")
     return body
 
 
@@ -102,7 +118,8 @@ class VimeoUploader(Uploader):
     credential_env = ("PUBLISH_VIMEO_ACCESS_TOKEN",)
     docs_url = "https://developer.vimeo.com/api/upload/videos"
     ffmpeg_skill_platform = ""                         # ffmpeg-skill has no vimeo delivery spec (ADR-005)
-    metadata_fields = ("title", "description", "privacy")
+    metadata_fields = ("title", "description", "privacy", "embed_domains")
+    optional_credential_env = (PASSWORD_ENV,)          # only for --privacy password (ADR-013)
 
     # Endpoints and tuning. Only code changes these (the tests point them at a loopback mock server); no flag,
     # environment variable or file does.
@@ -131,7 +148,20 @@ class VimeoUploader(Uploader):
             raise PublishError("INVALID_ARGUMENT", "the file is empty; nothing was uploaded")
         self._stats = {"requests": 0, "retries": 0, "resumed": 0, "waited_s": 0.0, "bytes_sent": 0}
         md = request.metadata
-        body = create_body(md, request.size)
+        password = ""
+        if md["privacy"] == "password":                       # before any request (ADR-013)
+            password = credentials.get_optional(PASSWORD_ENV)
+            if not password:
+                raise PublishError("CREDENTIALS_MISSING", f"privacy password needs {PASSWORD_ENV}, in the environment "
+                                   "or the keychain (`publish auth login --platform vimeo --variable "
+                                   f"{PASSWORD_ENV}`); nothing was uploaded (values are never printed)",
+                                   {"platform": self.id, "missing": [PASSWORD_ENV], "uploaded": False})
+            if len(password) > PASSWORD_MAX_CHARS:
+                raise PublishError("INVALID_ARGUMENT", f"the video password is longer than {PASSWORD_MAX_CHARS} "
+                                   "characters (Vimeo's limit); store a shorter one. Nothing was uploaded",
+                                   {"platform": self.id, "uploaded": False})
+            _hold(password)
+        body = create_body(md, request.size, password)
         token = credentials.get("PUBLISH_VIMEO_ACCESS_TOKEN")
         video = self._create(body, token)
         upload_link, uri = video["upload"]["upload_link"], video["uri"]
@@ -145,16 +175,53 @@ class VimeoUploader(Uploader):
                                f"{body['privacy']['view']}); delete it on Vimeo, or leave it", details, e.retryable) from None
         privacy_view = (video.get("privacy") or {}).get("view") if isinstance(video.get("privacy"), dict) else None
         reverse = {v: k for k, v in PRIVACY_VIEW.items()}
+        sent = dict(body, password="[REDACTED]") if "password" in body else body      # never in a receipt
         result: Dict[str, Any] = {"video_id": video_id, "uri": uri, "url": link,
                                   "privacy": reverse.get(privacy_view, privacy_view) if privacy_view else md["privacy"],
-                                  "privacy_view": privacy_view or body["privacy"]["view"], "sent": body,
+                                  "privacy_view": privacy_view or body["privacy"]["view"], "sent": sent,
                                   "thumbnail": None, "captions": [], "warnings": []}
+        if md["privacy"] == "domains":
+            done: list = []
+            try:
+                for domain in md["embed_domains"]:
+                    self._allow_domain(video_id, domain, token)
+                    done.append(domain)
+            except PublishError as e:
+                raise PublishError("UPLOAD_PARTIAL", f"the video was uploaded ({link}, embed only, privacy.embed "
+                                   f"whitelist) but adding the domain {md['embed_domains'][len(done)]} failed ({e.code}: "
+                                   f"{e.message}); it plays on {', '.join(done) or 'no domain'} so far. Add the rest on "
+                                   "Vimeo; do not run upload again: it would upload the video a second time",
+                                   {"platform": self.id, "uploaded": True, "video_id": video_id, "url": link,
+                                    "failed_step": "privacy domains", "domains_added": done, "cause": e.to_dict(),
+                                    "transfer": dict(self._stats)}) from None
+            result["embed_domains"] = done
         if privacy_view is not None and privacy_view != body["privacy"]["view"]:
             result["warnings"].append(f"sent privacy.view {body['privacy']['view']!r}, Vimeo reports {privacy_view!r} "
                                       "(the account's plan or settings can override it)")
         result["transfer"] = dict(self._stats)
         result["processing"] = "Vimeo transcodes the video after the upload; it may not be playable yet"
         return result
+
+    # ---- ADR-013: the embed allowlist ---------------------------------------------------------------------------
+    def _allow_domain(self, video_id: str, domain: str, token: str) -> None:
+        """PUT /videos/{id}/privacy/domains/{domain} (204). Retried on 429 and 5xx answers and on no answer: adding a
+        domain twice leaves one entry, so a retry cannot do harm."""
+        url = self.api_base + DOMAINS_PATH.format(id=quote(video_id, safe=""), domain=quote(domain, safe=""))
+        headers = {"Authorization": "bearer " + token, "Accept": ACCEPT}
+        attempt = 0
+        while True:
+            try:
+                resp: Optional[_Response] = self._send("PUT", url, b"", headers)
+            except (OSError, http.client.HTTPException):
+                resp = None
+            if resp is not None and resp.status in (200, 204):
+                return
+            if resp is not None and resp.status not in RETRIABLE_STATUS:
+                raise self._api_error(resp, "privacy domains")
+            attempt += 1
+            if attempt > self.max_retries:
+                raise self._interrupted("privacy domains", None, None, resp)
+            self._backoff(attempt, resp)
 
     # ---- step 1: create the video -------------------------------------------------------------------------------
     def _create(self, body: Dict[str, Any], token: str) -> Dict[str, Any]:

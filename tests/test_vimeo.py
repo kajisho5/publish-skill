@@ -504,7 +504,7 @@ class VimeoLimitsTableTests(OfflineTestCase):
     def test_vimeo_values_as_researched(self):
         # Read from the pages cited in limits.py on 2026-10-31; change only together with the quote and the date.
         want = {"video.max_bytes": 322122547200, "video.max_duration_s": 86400, "title.max_chars": 128,
-                "description.max_chars": 5000, "privacy.values": ["private", "unlisted", "public"],
+                "description.max_chars": 5000, "privacy.values": ["private", "unlisted", "public", "password", "domains"],
                 "upload.content_type": "application/offset+octet-stream"}
         for key, v in want.items():
             self.assertEqual(L.value("vimeo", key), v, key)

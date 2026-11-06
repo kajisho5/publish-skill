@@ -13,13 +13,14 @@ from .errors import ERROR_TABLE
 from .limits import LIMITS
 from .plan import PLAN_SCHEMA, STATUSES
 from .platforms import get_platform, platform_ids
-from .series import SERIES_SCHEMA, STATE_SCHEMA
+from .series import RECEIPT_SCHEMA, SERIES_SCHEMA, STATE_SCHEMA
 from .upload import TOKEN_BINDS, TOKEN_PREFIX
 
 _METADATA_ARGV = ["[--title <t>]", "[--description <d> | --description-file <f>]", "[--tag <t> ...]",
-                  "[--privacy private|unlisted|public]", "[--thumbnail <image>]",
+                  "[--privacy private|unlisted|public|password|domains]", "[--thumbnail <image>]",
                   "[--caption <file> ... --caption-language <bcp47> ...]",
-                  "[--language <bcp47>]", "[--localizations <json file>]", "[--publish-at <rfc3339>]"]
+                  "[--language <bcp47>]", "[--localizations <json file>]", "[--publish-at <rfc3339>]",
+                  "[--embed-domain <domain> ...]"]
 # the only modules with network code: one per implemented uploader (ADR-004 .. ADR-010)
 NETWORK_MODULES = ["src/publish_skill/platforms/facebook.py", "src/publish_skill/platforms/linkedin.py",
                    "src/publish_skill/platforms/reels.py", "src/publish_skill/platforms/tiktok.py",
@@ -65,9 +66,11 @@ def tools() -> list:
                                "uploaded and never sends a clip twice; a clip with an unknown outcome blocks the series "
                                "until a human resolves it. Dry run unless --confirm",
                 "argv": ["series", "<manifest.json>", "--platform <id>", "[--confirm <token> ...]", "[--state <file>]",
-                         "[--resolve <n>=uploaded|not-uploaded]", "--json"],
-                "writes": "the state file only (default <manifest>.publish-state.json): ids, URLs, sha256 and tokens; "
-                          "no credential", "decision": "docs/decisions.md ADR-012"})
+                         "[--resolve <n>=uploaded|not-uploaded]", "[--receipt <file.json|file.csv>]", "--json"],
+                "writes": "the state file (default <manifest>.publish-state.json): ids, URLs, sha256 and tokens; and, "
+                          "with --receipt, the organiser's delivery receipt (JSON or CSV: URL, privacy, sha256 per "
+                          "session, ADR-013); no credential or video password in either",
+                "receipt_schema": RECEIPT_SCHEMA, "decision": "docs/decisions.md ADR-012, ADR-013"})
     out += [
         {"tool_id": f"{SKILL_ID}/doctor", "role": "diagnostic", "network": False, "writes_media": False, "mutates_input": False,
          "deterministic": False, "implemented": True, "schema": DOCTOR_SCHEMA,
@@ -196,7 +199,9 @@ def contract() -> Dict[str, Any]:
                           "resumable": "https://developer.vimeo.com/api/upload/videos (tus 1.0.0, https://tus.io/protocols/resumable-upload)",
                           "methods": ["POST /me/videos (upload.approach tus)", "PATCH upload_link", "HEAD upload_link"],
                           "chunk_bytes": "128 MiB (the guide recommends 128-512 MB)",
-                          "metadata_sent": ["name", "description", "privacy.view"],
+                          "metadata_sent": ["name", "description", "privacy.view", "password (privacy password; "
+                                            "PUBLISH_VIMEO_VIDEO_PASSWORD, redacted)", "privacy.embed whitelist and PUT "
+                                            "/videos/{id}/privacy/domains/{domain} (privacy domains)"],
                           "retries": "5xx, 429, connection errors and timeouts on PATCH/HEAD: exponential backoff (or "
                                      "Retry-After), then HEAD and a resume from Upload-Offset; the create POST is retried "
                                      "only on 429/5xx answers",

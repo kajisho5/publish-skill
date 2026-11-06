@@ -100,8 +100,11 @@ def _forbidden(text: str, chars: Optional[List[str]]) -> List[str]:
 
 _FIELD_FLAGS = {"title": "--title", "description": "--description", "tags": "--tag", "thumbnail": "--thumbnail",
                 "captions": "--caption", "language": "--language", "localizations": "--localizations",
-                "publish_at": "--publish-at"}
-_OPTIONAL_FIELDS = ("title", "description", "tags", "thumbnail", "captions", "language", "localizations", "publish_at")
+                "publish_at": "--publish-at", "embed_domains": "--embed-domain"}
+_OPTIONAL_FIELDS = ("title", "description", "tags", "thumbnail", "captions", "language", "localizations", "publish_at",
+                    "embed_domains")
+# a domain name as Vimeo's allowlist takes it (ADR-013): ASCII labels (an IDN in its xn-- form), at least two
+_DOMAIN = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9-]{2,63}$")
 
 
 def chapters(description: Optional[str]) -> List[Dict[str, Any]]:
@@ -141,7 +144,8 @@ def unsupported_fields(platform_id: str, md: Metadata) -> List[str]:
     sent = get_platform(platform_id).metadata_fields
     present = {"title": md.title is not None, "description": md.description is not None, "tags": bool(md.tags),
                "thumbnail": md.thumbnail is not None, "captions": bool(md.captions), "language": md.language is not None,
-               "localizations": bool(md.localizations), "publish_at": md.publish_at is not None}
+               "localizations": bool(md.localizations), "publish_at": md.publish_at is not None,
+               "embed_domains": bool(md.embed_domains)}
     return [f for f in _OPTIONAL_FIELDS if present[f] and f not in sent]
 
 
@@ -158,7 +162,8 @@ def metadata_checks(platform_id: str, md: Metadata, duration: Optional[float] = 
                          f"drop {_FIELD_FLAGS[f]}: the {platform.name} uploader sends "
                          f"{', '.join(platform.metadata_fields)} only; add it on {platform.name} after the upload"))
     if unsupported:
-        md = dataclasses.replace(md, **{f: ([] if f in ("tags", "captions") else {} if f == "localizations" else None)
+        md = dataclasses.replace(md, **{f: ([] if f in ("tags", "captions", "embed_domains") else {} if f == "localizations"
+                                            else None)
                                         for f in unsupported})
     # YouTube and Vimeo count characters, TikTok UTF-16 code units ("runes"), X weighted characters (twitter-text):
     # each table has one of the three keys
@@ -262,6 +267,29 @@ def metadata_checks(platform_id: str, md: Metadata, duration: Optional[float] = 
     rows += _chapter_rows(platform_id, md.description, duration)
     rows += _schedule_rows(platform_id, md)
     rows += _localization_rows(platform_id, md)
+    rows += _embed_rows(platform_id, md)
+    return rows
+
+
+def _embed_rows(platform_id: str, md: Metadata) -> List[Dict[str, Any]]:
+    """Vimeo's domain-limited privacy (ADR-013): `domains` needs at least one --embed-domain, and the domains need it."""
+    if L.limits_of(platform_id).get("privacy.embed_domains") is None or (md.privacy != "domains" and not md.embed_domains):
+        return []
+    rows = []
+    if md.privacy == "domains" and not md.embed_domains:
+        rows.append(_row("embed domains", "FAIL", [], "at least one", platform_id, "privacy.embed_domains",
+                         "give --embed-domain example.org (repeat for more): with privacy domains the video plays "
+                         "only where it is embedded"))
+    elif md.privacy != "domains":
+        rows.append(_row("embed domains", "FAIL", md.embed_domains, "--privacy domains", platform_id,
+                         "privacy.embed_domains", "--embed-domain goes with --privacy domains"))
+    else:
+        bad = [d for d in md.embed_domains if not _DOMAIN.match(d)]
+        dupes = sorted({d.lower() for d in md.embed_domains if [x.lower() for x in md.embed_domains].count(d.lower()) > 1})
+        rows.append(_row("embed domains", "FAIL" if bad or dupes else "PASS", md.embed_domains, "domain names",
+                         platform_id, "privacy.embed_domains",
+                         (f"not a domain name: {', '.join(bad)} (no scheme, path or port; an IDN in its xn-- form)"
+                          if bad else f"named twice: {', '.join(dupes)}" if dupes else "")))
     return rows
 
 

@@ -41,6 +41,9 @@ _VM_UPLOAD_START = "https://developer.vimeo.com/api/guides/videos/upload"
 _VM_REF_UPLOAD = "https://developer.vimeo.com/api/reference/videos#upload_video"
 _VM_REF_EDIT = "https://developer.vimeo.com/api/reference/videos#edit_video"
 _VM_RATE = "https://developer.vimeo.com/guidelines/rate-limiting"
+# Vimeo password and domain-limited privacy (roadmap step 10, ADR-013): the same reference (3.4.9), read 2026-11-06.
+ACCESSED_STEP10 = "2026-11-06"
+_VM_REF_DOMAIN = "https://developer.vimeo.com/api/reference/videos#add_video_privacy_domain"
 _VM_NO_SPEC = ("ffmpeg-skill has no `vimeo` delivery spec (scripts/_platforms.py, 2026-10-31); ffmpeg-skill owns it, so "
                "it is not written here (plan reports the delivery spec as UNCHECKED)")
 # TikTok (roadmap step 5, ADR-006): the Content Posting API pages on developers.tiktok.com, read on the same day.
@@ -548,19 +551,41 @@ LIMITS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "description.forbidden_chars": _unknown("no forbidden characters are stated", [_VM_REF_UPLOAD, _VM_REF_EDIT]),
         # The skill's privacy names, each sent as one privacy.view value (maps_to). `private` is `nobody`, the most
         # private option: "No one except the owner can access the video."
-        "privacy.values": _known(["private", "unlisted", "public"], "enum (this skill's names, sent as privacy.view)",
-                                 _VM_REF_UPLOAD,
+        "privacy.values": _known(["private", "unlisted", "public", "password", "domains"],
+                                 "enum (this skill's names, sent as privacy.view)", _VM_REF_UPLOAD,
                                  "privacy.view ... `nobody` - No one except the owner can access the video. This privacy "
                                  "setting appears as `Private` on the Vimeo front end. ... `unlisted` - Only those with the "
                                  "private link can access the video. ... `anybody` - Anyone can access the video. This "
-                                 "privacy setting appears as `Public` on the Vimeo front end.",
-                                 maps_to={"private": "nobody", "unlisted": "unlisted", "public": "anybody"},
+                                 "privacy setting appears as `Public` on the Vimeo front end. ... `disable` - The video is "
+                                 "embeddable, but it's hidden on Vimeo and can't be played. This privacy setting appears "
+                                 "as `Embed only` on the Vimeo front end. ... `password` - Only those with the password "
+                                 "can access the video.",
+                                 maps_to={"private": "nobody", "unlisted": "unlisted", "public": "anybody",
+                                          "password": "password", "domains": "disable"},
                                  api_values=["anybody", "contacts", "disable", "nobody", "password", "team", "unlisted",
                                              "users"],
-                                 not_offered="disable, password, team, contacts and users: password needs a secret in the "
-                                             "request, team a team plan, contacts and users are deprecated",
+                                 not_offered="team, contacts and users: team needs a team plan, contacts and users are "
+                                             "deprecated",
+                                 added_by_step_10="password and domains (ADR-013, read 2026-11-06)",
                                  api_default="not stated (the account's own default would apply); this skill always "
                                              "sends privacy.view, `nobody` unless --privacy says otherwise"),
+        "privacy.password": _known(32, "characters", _VM_REF_EDIT,
+                                   "password: The password. When you set privacy.view to `password`, you must provide "
+                                   "the password as an additional parameter. This field can hold a maximum of 32 "
+                                   "characters.", accessed=ACCESSED_STEP10,
+                                   upload_field=_VM_REF_UPLOAD + " (password: \"This field is required when privacy.view "
+                                                "is `password`.\")",
+                                   checked_as="at upload, before any request: the password is a credential "
+                                              "(PUBLISH_VIMEO_VIDEO_PASSWORD, environment or keychain), so plan, which "
+                                              "reads none, cannot see it; the token binds the privacy, not the password"),
+        "privacy.embed_domains": _known("privacy.embed `whitelist`, then one PUT per domain", "rule", _VM_REF_DOMAIN,
+                                        "privacy.embed ... `whitelist` - The video can be embedded on the specified "
+                                        "domains only. ... Add a domain to a video's allowlist: This method adds the "
+                                        "specified domain to a video's allowlist. (PUT "
+                                        "/videos/{video_id}/privacy/domains/{domain}; 204; 403 \"The video doesn't have "
+                                        "a user-defined access list.\"; scope edit)", accessed=ACCESSED_STEP10,
+                                        checked_as="--privacy domains with at least one --embed-domain, each a domain "
+                                                   "name (ASCII; an IDN in its xn-- form), none twice"),
         # account limits: they exist (typed errors) but their values depend on the membership and are not stated
         "storage.max_bytes": _unknown("per account; \"Error code 4101: The authenticated user's maximum disk space has "
                                       "been reached.\" No number is stated", [_VM_REF_UPLOAD, _VM_UPLOAD_START]),

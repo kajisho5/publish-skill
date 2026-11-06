@@ -31,6 +31,9 @@ class Uploader:
     # this platform's credential variables: read from the environment, or from the OS keychain under the same names
     # (ADR-001, ADR-003)
     credential_env: Tuple[str, ...] = ()
+    # credentials only some uploads need (ADR-013: a Vimeo video password); read from the same source as the others
+    # when present, never required by `credentials.load`, redacted like them
+    optional_credential_env: Tuple[str, ...] = ()
     docs_url = ""
     # the `check --platform` name of ffmpeg-skill's delivery spec for this platform (ffmpeg-skill owns that spec)
     ffmpeg_skill_platform = ""
@@ -40,7 +43,8 @@ class Uploader:
 
     def spec(self) -> Dict[str, Any]:
         return {"id": self.id, "name": self.name, "implemented": self.implemented, "roadmap_step": self.roadmap_step,
-                "credential_env": list(self.credential_env), "docs_url": self.docs_url,
+                "credential_env": list(self.credential_env),
+                "optional_credential_env": list(self.optional_credential_env), "docs_url": self.docs_url,
                 "ffmpeg_skill_platform": self.ffmpeg_skill_platform, "metadata_fields": list(self.metadata_fields)}
 
     def upload(self, request: UploadRequest, credentials: Any) -> Dict[str, Any]:

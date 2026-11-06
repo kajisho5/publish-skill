@@ -19,6 +19,11 @@ Every clip goes through upload.py's gate unchanged: without --confirm the series
 confirm_token per clip; with --confirm (repeatable) only clips whose own token is given are uploaded, in order, and the
 run stops at the first clip without one. A token that matches no clip is refused before anything is sent.
 
+The same manifest can list `sessions` instead of `clips` (an organiser's restricted delivery, roadmap step 10,
+ADR-013), each with an optional `id` (e.g. a programme code) and, on Vimeo, `embed_domains`; `--receipt FILE` writes
+the organiser's delivery receipt after a confirmed run: one row per session with its URL, privacy, who can watch it
+and the sha256 of the uploaded file (JSON, or CSV when FILE ends in .csv), never a credential or a video password.
+
 A state file (default `<manifest>.publish-state.json`; --state) records each clip as it goes: `sending` before its
 upload starts, `uploaded` (with the receipt's id, URL and privacy) after it, removed again when the upload failed
 before anything was published. A later run skips uploaded clips and resumes at the first one that is not, so no clip
@@ -28,6 +33,7 @@ happened (`--resolve N=uploaded` or `--resolve N=not-uploaded`). The state holds
 link: the ids and URLs of published clips, the files' sha256 and the tokens, which are not secrets (ADR-001)."""
 from __future__ import annotations
 
+import csv
 import datetime
 import json
 import os
@@ -45,8 +51,11 @@ STATE_SCHEMA = f"{SKILL_ID}/series-state@1"
 SERIES_SCHEMA = f"{SKILL_ID}/series@1"
 DEFAULT_LINK_LABEL = "Full video"
 STATE_SUFFIX = ".publish-state.json"
-_CLIP_KEYS = {"file", "title", "description", "tags", "privacy", "thumbnail", "captions"}
-_TOP_KEYS = {"full_video_url", "link_label", "privacy", "clips", "name"}
+_CLIP_KEYS = {"file", "title", "description", "tags", "privacy", "thumbnail", "captions", "id", "embed_domains"}
+_TOP_KEYS = {"full_video_url", "link_label", "privacy", "clips", "sessions", "name", "embed_domains"}
+RECEIPT_SCHEMA = f"{SKILL_ID}/delivery-receipt@1"
+RECEIPT_COLUMNS = ("index", "id", "title", "file", "status", "url", "privacy", "access", "video_id", "sha256", "size",
+                   "uploaded_at")
 _URL = re.compile(r"^https://[^\s/$.?#][^\s]*$")
 
 
@@ -68,9 +77,12 @@ def read_manifest(path: str) -> Dict[str, Any]:
     if not isinstance(doc, dict) or set(doc) - _TOP_KEYS:
         raise _bad(f"an object with the keys {', '.join(sorted(_TOP_KEYS))} only", path=path,
                    unknown=sorted(set(doc) - _TOP_KEYS) if isinstance(doc, dict) else None)
-    clips = doc.get("clips")
+    if ("clips" in doc) == ("sessions" in doc):
+        raise _bad("give the items as `clips` or as `sessions` (one of the two)", path=path)
+    clips = doc.get("clips", doc.get("sessions"))
     if not isinstance(clips, list) or not clips:
-        raise _bad("`clips` must be a non-empty list", path=path)
+        raise _bad("`clips` / `sessions` must be a non-empty list", path=path)
+    doc["clips"] = clips
     url = doc.get("full_video_url")
     if url is not None and (not isinstance(url, str) or not _URL.match(url)):
         raise _bad("`full_video_url` must be an https URL without spaces", path=path)
@@ -80,11 +92,12 @@ def read_manifest(path: str) -> Dict[str, Any]:
     for i, c in enumerate(clips, 1):
         if not isinstance(c, dict) or not isinstance(c.get("file"), str) or set(c) - _CLIP_KEYS:
             raise _bad(f"clip {i} must be an object with `file` and only {', '.join(sorted(_CLIP_KEYS))}", clip=i)
-        for k in ("title", "description", "privacy", "thumbnail"):
+        for k in ("title", "description", "privacy", "thumbnail", "id"):
             if c.get(k) is not None and not isinstance(c[k], str):
                 raise _bad(f"clip {i}: `{k}` must be a string", clip=i)
-        if c.get("tags") is not None and not (isinstance(c["tags"], list) and all(isinstance(t, str) for t in c["tags"])):
-            raise _bad(f"clip {i}: `tags` must be a list of strings", clip=i)
+        for k in ("tags", "embed_domains"):
+            if c.get(k) is not None and not (isinstance(c[k], list) and all(isinstance(t, str) for t in c[k])):
+                raise _bad(f"clip {i}: `{k}` must be a list of strings", clip=i)
         caps = c.get("captions") or []
         if not isinstance(caps, list) or not all(isinstance(x, dict) and isinstance(x.get("file"), str)
                                                  and isinstance(x.get("language"), str) and set(x) == {"file", "language"}
@@ -92,6 +105,9 @@ def read_manifest(path: str) -> Dict[str, Any]:
             raise _bad(f"clip {i}: `captions` must be a list of {{\"file\", \"language\"}}", clip=i)
     if doc.get("privacy") is not None and not isinstance(doc["privacy"], str):
         raise _bad("`privacy` must be a string", path=path)
+    if doc.get("embed_domains") is not None and not (isinstance(doc["embed_domains"], list)
+                                                     and all(isinstance(t, str) for t in doc["embed_domains"])):
+        raise _bad("`embed_domains` must be a list of strings", path=path)
     return doc
 
 
@@ -118,10 +134,11 @@ def clip_metadata(platform_id: str, manifest: Dict[str, Any], base_dir: str) -> 
             md = build(title=text["title"], description=text["description"], tags=c.get("tags"),
                        privacy=c.get("privacy", manifest.get("privacy")),
                        thumbnail=rel(c["thumbnail"]) if c.get("thumbnail") else None,
-                       captions=[rel(x["file"]) for x in caps], caption_languages=[x["language"] for x in caps])
+                       captions=[rel(x["file"]) for x in caps], caption_languages=[x["language"] for x in caps],
+                       embed_domains=c.get("embed_domains", manifest.get("embed_domains")))
         except PublishError as e:
             raise PublishError(e.code, f"clip {i}: {e.message}", dict(e.details, clip=i)) from None
-        out.append({"index": i, "path": rel(c["file"]), "metadata": md})
+        out.append({"index": i, "id": c.get("id"), "path": rel(c["file"]), "metadata": md})
     return out
 
 
@@ -177,8 +194,53 @@ def _parse_resolve(values: Sequence[str]) -> Dict[int, str]:
     return out
 
 
+def _access(md: Dict[str, Any]) -> str:
+    """Who can watch it, in words for the organiser's receipt (never the password itself)."""
+    p = md.get("privacy")
+    if p == "domains":
+        return "embedded on " + ", ".join(md.get("embed_domains") or []) + " only"
+    return {"private": "the owner only (and people the owner shares it with on the platform)", "unlisted": "anyone with the link",
+            "public": "everyone", "password": "anyone with the link and the password (shared separately)"}.get(p, str(p))
+
+
+def receipt(base: Dict[str, Any], entries: Dict[str, Any]) -> Dict[str, Any]:
+    """The organiser's delivery receipt (ADR-013): one row per session or clip, its URL, privacy and the sha256 of
+    the file that was uploaded (verified as it was sent), from the state; no credential, no password."""
+    rows = []
+    for r in base["clips"]:
+        e = entries.get(str(r["index"])) or {}
+        md = r["metadata"]
+        rows.append({"index": r["index"], "id": r.get("id") or str(r["index"]), "title": md.get("title"),
+                     "file": os.path.basename(r["input"]["path"]), "status": e.get("status", "pending"),
+                     "url": e.get("url"), "privacy": e.get("privacy") or md.get("privacy"), "access": _access(md),
+                     "video_id": e.get("video_id"), "sha256": r["input"]["sha256"], "size": r["input"]["size"],
+                     "uploaded_at": e.get("uploaded_at")})
+    return {"schema": RECEIPT_SCHEMA, "skill": base["skill"], "platform": base["platform"]["id"],
+            "platform_name": base["platform"]["name"], "manifest": base["manifest"], "generated_at": _now(),
+            "complete": all(x["status"] == "uploaded" for x in rows),
+            "uploaded": sum(1 for x in rows if x["status"] == "uploaded"), "total": len(rows), "sessions": rows}
+
+
+def write_receipt(path: str, doc: Dict[str, Any]) -> None:
+    """JSON, or CSV (UTF-8, a header row, RFC 4180 quoting) when the path ends in .csv; written atomically."""
+    doc = creds.redact(doc)
+    tmp = path + ".tmp"
+    if path.lower().endswith(".csv"):
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(RECEIPT_COLUMNS)
+            for row in doc["sessions"]:
+                w.writerow(["" if row[k] is None else row[k] for k in RECEIPT_COLUMNS])
+    else:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+    os.replace(tmp, path)
+
+
 def series(manifest_path: str, platform_id: str, confirm: Optional[Sequence[str]] = None,
-           state_path: Optional[str] = None, resolve: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+           state_path: Optional[str] = None, resolve: Optional[Sequence[str]] = None,
+           receipt_path: Optional[str] = None) -> Dict[str, Any]:
     uploader = get_platform(platform_id)                                 # UNKNOWN_PLATFORM before any file is read
     manifest = read_manifest(manifest_path)
     base_dir = os.path.dirname(os.path.abspath(manifest_path))
@@ -223,7 +285,7 @@ def series(manifest_path: str, platform_id: str, confirm: Optional[Sequence[str]
     report: List[Dict[str, Any]] = []
     for c, d in zip(clips, dry):
         e = entries.get(str(c["index"]))
-        report.append({"index": c["index"], "input": d["input"], "metadata": d["metadata"],
+        report.append({"index": c["index"], "id": c["id"], "input": d["input"], "metadata": d["metadata"],
                        "confirm_token": d["confirm_token"],
                        "state": (e or {}).get("status", "pending"),
                        "result": {k: e.get(k) for k in ("video_id", "url", "privacy")} if e else None})
@@ -280,6 +342,8 @@ def series(manifest_path: str, platform_id: str, confirm: Optional[Sequence[str]
                 del entries[key]
             _save_state(state_path, state)
             r["outcome"] = "failed"
+            if receipt_path:
+                write_receipt(receipt_path, receipt(base, entries))
             raise PublishError(e.code, f"series stopped at clip {c['index']} of {len(clips)}: {e.message}",
                                dict(e.details, clip=c["index"], state=state_path, uploaded_now=uploaded_now,
                                     series=_progress(report)), e.retryable) from None
@@ -287,6 +351,8 @@ def series(manifest_path: str, platform_id: str, confirm: Optional[Sequence[str]
         entries[key] = {"status": "uploaded", "sha256": r["input"]["sha256"], "confirm_token": r["confirm_token"],
                         "video_id": res.get("video_id"), "url": res.get("url"), "privacy": res.get("privacy"),
                         "uploaded_at": _now()}
+        if res.get("privacy_view"):
+            entries[key]["privacy_view"] = res["privacy_view"]
         _save_state(state_path, state)
         r.update(state="uploaded", outcome="uploaded", result={k: res.get(k) for k in ("video_id", "url", "privacy")},
                  receipt=res)
@@ -294,11 +360,16 @@ def series(manifest_path: str, platform_id: str, confirm: Optional[Sequence[str]
     for r in report:
         r.setdefault("outcome", "not reached" if r["state"] != "uploaded" else "skipped (already uploaded)")
     complete = all(r["state"] == "uploaded" for r in report)
+    out_receipt = None
+    if receipt_path:
+        out_receipt = os.path.abspath(receipt_path)
+        write_receipt(out_receipt, receipt(base, entries))
     nxt = ("every clip is uploaded" if complete else
            f"clip {next(r['index'] for r in report if r['state'] != 'uploaded')} is next: after a human approves it, "
            "re-run with its --confirm token")
     return creds.redact(dict(base, ok=True, dry_run=False, uploaded=bool(uploaded_now), network_used=bool(uploaded_now),
-                             complete=complete, uploaded_now=uploaded_now, series=_progress(report), next_step=nxt))
+                             complete=complete, uploaded_now=uploaded_now, series=_progress(report), next_step=nxt,
+                             receipt=out_receipt))
 
 
 def _progress(report: List[Dict[str, Any]]) -> Dict[str, Any]:

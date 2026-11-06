@@ -86,6 +86,7 @@ Protocol read from Vimeo's developer documentation on 2026-10-31: [Working with 
 2. `PATCH <upload_link>` in 128 MiB chunks (the guide recommends 128-512 MB) with `Tus-Resumable: 1.0.0`, `Upload-Offset` and `Content-Type: application/offset+octet-stream`; `204` and the new `Upload-Offset` after each. These requests carry no `Authorization` header: the token goes to `api.vimeo.com` only.
 3. An interrupted chunk (no answer, a reset, a 60 s timeout, 5xx, 429) or a `409` (offset mismatch) waits with exponential backoff (`random × 2^n` s, at most 64 s, or `Retry-After` up to 5 min), asks `HEAD <upload_link>` for `Upload-Offset` and resumes from it; at most 10 retries per request. The create `POST` is retried on 429/5xx answers only: without an answer a placeholder may already exist, and a second `POST` would add another.
 4. The receipt (`uploaded: true`, `result.video_id`, `uri`, `url`, `privacy`, `privacy_view`, `sent`, `transfer`) passes through the redactor. Vimeo transcodes the video afterwards.
+5. Restricted delivery ([ADR-013](docs/decisions.md)): `--privacy password` sends `privacy.view` `password` and the video password from `PUBLISH_VIMEO_VIDEO_PASSWORD` (environment or keychain: `publish auth login --platform vimeo --variable PUBLISH_VIMEO_VIDEO_PASSWORD`; at most 32 characters; never printed, never in the token or a receipt). `--privacy domains --embed-domain events.example.org` (repeat) sends `privacy.view` `disable` (embed only, hidden on Vimeo) and `privacy.embed` `whitelist`, then `PUT /videos/{id}/privacy/domains/{domain}` once per domain; a domain that fails after the upload is `UPLOAD_PARTIAL` (`details.domains_added`).
 
 | Error | Exit | Retryable | Meaning |
 |---|---|---|---|
@@ -207,6 +208,7 @@ A set of Shorts or Reels cut from one source, uploaded in order, each with its o
 - A state file (`<manifest>.publish-state.json`, or `--state`) records each clip: `sending`, then `uploaded` (id, URL, privacy, sha256), or removed when nothing was published. Running the same command again skips uploaded clips and resumes at the first one that is not, so no clip is sent twice. A clip whose file or metadata changed after it was uploaded is never sent again.
 - An unknown outcome (a lost publish answer, an interrupted process) leaves the clip `uncertain`, and the series stops there (`UPLOAD_PARTIAL`) until a human checks the platform and runs `--resolve N=uploaded` or `--resolve N=not-uploaded`.
 - The state holds no credential, session URI or upload link.
+- **Sessions and the organiser's receipt** ([ADR-013](docs/decisions.md)): the manifest may list `sessions` instead of `clips` (each with an optional `id`, e.g. a programme code, and on Vimeo `embed_domains`), with `unlisted`, `private`, or on Vimeo `password` / `domains` privacy. `--receipt receipt.json` (or `receipt.csv`, UTF-8 with a header row) is written after every confirmed run: per session its `id`, `title`, `file`, `status`, `url`, `privacy`, `access` (who can watch it, in words), `video_id`, the `sha256` and `size` of the uploaded file, and `uploaded_at` (UTC). It never holds a credential or a video password.
 
 ## Credentials ([ADR-003](docs/decisions.md))
 
@@ -278,7 +280,9 @@ Read from Vimeo's developer documentation on 2026-10-31 (API 3.4; `publish contr
 | `title.max_chars` | 128 characters | FAIL above | https://developer.vimeo.com/api/reference/videos#edit_video |
 | `title.forbidden_chars`, `description.forbidden_chars` | unknown (not stated) | not checked | searched: the upload and edit reference |
 | `description.max_chars` | 5000 characters | FAIL above | https://developer.vimeo.com/api/reference/videos#edit_video |
-| `privacy.values` | `private` (`nobody`), `unlisted` (`unlisted`), `public` (`anybody`) | FAIL otherwise | https://developer.vimeo.com/api/reference/videos#upload_video |
+| `privacy.values` | `private` (`nobody`), `unlisted` (`unlisted`), `public` (`anybody`), `password` (`password`), `domains` (`disable`: embed only) | FAIL otherwise | https://developer.vimeo.com/api/reference/videos#upload_video |
+| `privacy.password` | the video password, at most 32 characters (`PUBLISH_VIMEO_VIDEO_PASSWORD`, read 2026-11-06) | refused at upload, before any request | https://developer.vimeo.com/api/reference/videos#edit_video |
+| `privacy.embed_domains` | `privacy.embed` `whitelist` and one `PUT /videos/{id}/privacy/domains/{domain}` per `--embed-domain` | FAIL without a domain, or a domain without `--privacy domains` | https://developer.vimeo.com/api/reference/videos#add_video_privacy_domain |
 | `storage.max_bytes`, `quota.weekly_uploads`, `quota.daily_uploads` | unknown, per account (errors 4101, 4102, 4104 exist; no number is stated) | not checked; typed errors at upload | searched: https://developer.vimeo.com/api/reference/videos#upload_video |
 | `rate_limit.requests_per_minute` | 25 (Free), 125 (Starter), 250 (Standard), 750 (Advanced), 1500 (Studio), 2500 (Enterprise); 429 and error 9000 above | reported | https://developer.vimeo.com/guidelines/rate-limiting |
 | `upload.access` | the API app needs upload access (Vimeo Free: approval by support ticket) | reported | https://developer.vimeo.com/api/guides/videos/upload |

@@ -246,7 +246,8 @@ class PlatformTests(OfflineTestCase):
         self.assertEqual(tt.metadata_fields, ("title", "privacy"))
         vm = get_platform("vimeo")
         self.assertEqual((vm.implemented, vm.roadmap_step, vm.credential_env), (True, 5, ("PUBLISH_VIMEO_ACCESS_TOKEN",)))
-        self.assertEqual(vm.metadata_fields, ("title", "description", "privacy"))
+        self.assertEqual(vm.metadata_fields, ("title", "description", "privacy", "embed_domains"))     # ADR-013
+        self.assertEqual(vm.optional_credential_env, ("PUBLISH_VIMEO_VIDEO_PASSWORD",))
         yt = get_platform("youtube")
         self.assertEqual((yt.implemented, yt.roadmap_step), (True, 4))
         self.assertEqual(yt.credential_env, YT_VARS)
