@@ -364,7 +364,8 @@ class PlanTests(OfflineTestCase):
         self.assertEqual((doc["uploaded"], doc["network_used"], doc["schema"]), (False, False, "publish/plan@1"))
         self.assertEqual(doc["ffmpeg_skill"]["status"], "OK")
         self.assertEqual(doc["ffmpeg_skill"]["export_preset"], "youtube")
-        self.assertEqual(doc["counts"], {"pass": len(doc["checks"]), "warn": 0, "fail": 0, "unchecked": 0})
+        # ffmpeg-skill's duration row is guidance (ADR-015): shown, not counted
+        self.assertEqual(doc["counts"], {"pass": len(doc["checks"]) - 1, "warn": 0, "fail": 0, "unchecked": 0, "guidance": 1})
         owners = {r["owner"] for r in doc["checks"]}
         self.assertEqual(owners, {"publish", "ffmpeg-skill"})
         self.assertEqual(rows_by(doc, "duration")[0]["value"], 12.5)        # measured by ffmpeg-skill, limit from limits.py

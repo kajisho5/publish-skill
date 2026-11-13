@@ -6,9 +6,14 @@ Two sources of rows, each owned by one repository:
   owner "ffmpeg-skill"  the delivery spec rows of ffmpeg-skill `check --platform <p>` (codec, frame size, aspect, frame
                         rate, ...), passed through as ffmpeg-skill wrote them; their values are never restated here
 
+For a platform's duration and file size, this skill's cited values (limits.py) are authoritative (ADR-015): ffmpeg-skill's
+`duration` and `file size` rows are shown as guidance (`basis: "guidance"`, `in_verdict: false`) and left out of the
+verdict and the counts; every other ffmpeg-skill row counts. Every row says whether it counts (`in_verdict`).
+
 Row status: PASS | WARN | FAIL | UNCHECKED (could not be checked: ffmpeg-skill missing or failed). The verdict is FAIL
-when any row fails, otherwise INCOMPLETE when any row is unchecked, otherwise WARN or PASS. `ok` is true for PASS and
-WARN only, and the CLI exits 1 otherwise. Nothing is uploaded, no credential is read and no connection is opened."""
+when any counted row fails, otherwise INCOMPLETE when any counted row is unchecked, otherwise WARN or PASS. `ok` is true
+for PASS and WARN only, and the CLI exits 1 otherwise. Nothing is uploaded, no credential is read and no connection is
+opened."""
 from __future__ import annotations
 
 import dataclasses
@@ -27,6 +32,11 @@ from .platforms import get_platform
 
 PLAN_SCHEMA = f"{SKILL_ID}/plan@1"
 STATUSES = ("PASS", "WARN", "FAIL", "UNCHECKED")
+# ffmpeg-skill `check` rows whose limit is a platform upload limit: this skill owns those limits (limits.py,
+# video.max_duration_s and video.max_bytes), so these rows are guidance and never decide the verdict (ADR-015)
+GUIDANCE_CHECKS = {"duration": "video.max_duration_s", "file size": "video.max_bytes"}
+GUIDANCE_NOTE = ("guidance only: this skill's own {check} row decides, from its cited limit ({key}); "
+                 "ffmpeg-skill's value is shown, not counted")
 # the shape of a BCP-47 tag (RFC 5646): a 2-3 letter (or 4-8 letter) language, then hyphenated 1-8 character subtags
 _BCP47 = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*$|^[A-Za-z]{4,8}(?:-[A-Za-z0-9]{1,8})*$")
 # a chapter line (ADR-011): a timestamp at the start of a line, after optional bullets or an opening bracket;
@@ -38,12 +48,17 @@ _RFC3339 = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):
 
 def _row(check: str, status: str, value: Any, limit: Any, platform_id: str, key: Optional[str], fix: str = "",
          owner: str = "publish") -> Dict[str, Any]:
-    row: Dict[str, Any] = {"check": check, "status": status, "value": value, "limit": limit, "owner": owner}
+    row: Dict[str, Any] = {"check": check, "status": status, "value": value, "limit": limit, "owner": owner,
+                           "in_verdict": True}
     entry = L.limits_of(platform_id).get(key or "")
     if entry:
         row["limit_key"] = key
+        row["limit_status"] = entry["status"]           # documented | unknown (not stated: nothing checked against it)
         if entry.get("source"):
             row["source"], row["accessed"] = entry["source"], entry["accessed"]
+        elif entry["status"] == "unknown":
+            row["searched"], row["accessed"] = entry["searched"], entry["accessed"]
+            row["note"] = entry["note"]
     if fix:
         row["fix"] = fix
     return row
@@ -423,18 +438,26 @@ def delivery_checks(platform_id: str, path: str, ffmpeg_skill_dir: Optional[str]
             continue
         status = r.get("status") if r.get("status") in ("PASS", "WARN", "FAIL") else "UNCHECKED"
         row = {"check": str(r.get("check")), "status": status, "value": r.get("value"), "limit": r.get("expected"),
-               "owner": "ffmpeg-skill", "source": f"ffmpeg-skill/check --platform {check_platform}"}
+               "owner": "ffmpeg-skill", "source": f"ffmpeg-skill/check --platform {check_platform}", "in_verdict": True}
         for k in ("fix", "reason", "kind"):
             if r.get(k):
                 row[k] = r[k]
+        if row["check"] in GUIDANCE_CHECKS:
+            row.update(in_verdict=False, basis="guidance",
+                       guidance=GUIDANCE_NOTE.format(check=row["check"], key=GUIDANCE_CHECKS[row["check"]]))
         if r.get("check") == "duration":
             duration = _seconds(r.get("value"))
         rows.append(row)
     return {"info": info, "rows": rows, "duration": duration, "why": "ffmpeg-skill reported no parsable duration"}
 
 
+def counted(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The rows that decide the verdict: all but ffmpeg-skill's guidance rows (ADR-015)."""
+    return [r for r in rows if r.get("in_verdict", True)]
+
+
 def verdict(rows: List[Dict[str, Any]]) -> str:
-    statuses = {r["status"] for r in rows}
+    statuses = {r["status"] for r in counted(rows)}
     for v in ("FAIL", "UNCHECKED", "WARN"):
         if v in statuses:
             return "INCOMPLETE" if v == "UNCHECKED" else v
@@ -452,7 +475,8 @@ def plan(path: str, platform_id: str, metadata: Metadata = DEFAULT_METADATA,
             + duration_checks(platform_id, delivery["duration"], delivery["why"])
             + metadata_checks(platform_id, metadata, delivery["duration"]) + delivery["rows"])
     v = verdict(rows)
-    counts = {s.lower(): sum(1 for r in rows if r["status"] == s) for s in STATUSES}
+    counts = {s.lower(): sum(1 for r in counted(rows) if r["status"] == s) for s in STATUSES}
+    counts["guidance"] = len(rows) - len(counted(rows))         # shown, not counted above (ADR-015)
     nxt = {"PASS": "run `publish upload` with the same flags (a dry run) and show the human its confirm_token",
            "WARN": "review the WARN rows with the human, then run `publish upload` with the same flags (a dry run)",
            "FAIL": "fix the FAIL rows (each names its fix) and run plan again; do not upload",

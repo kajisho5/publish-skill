@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "publish-skill"
-version = "0.1.0"
+version = "0.2.0"
 description = "Upload finished deliverables to delivery platforms, after QC: dry run by default, an explicit confirmation token for every upload, credentials from the environment or the OS keychain."
 readme = "README.md"
 license = {text = "MIT"}

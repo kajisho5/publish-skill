@@ -65,6 +65,7 @@ jobs:
           grep -E "^test_a_mock_upload_carries_two_caption_tracks_and_a_scheduled_time .* \.\.\. ok" test.log
           grep -E "^test_five_clips_with_a_failure_on_clip_3_resume_at_clip_3_and_upload_each_once .* \.\.\. ok" test.log
           grep -E "^test_three_sessions_write_a_receipt_with_three_urls_and_their_privacy .* \.\.\. ok" test.log
+          grep -E "^test_done_when_a_5_minute_video_for_x_is_decided_by_this_skills_limit .* \.\.\. ok" test.log
       - run: publish contract --json
       - name: doctor (no credentials, no ffmpeg-skill here -> degraded, exit 0)
         shell: bash

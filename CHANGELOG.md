@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 - 2026-11-13
+
+This skill's duration and file-size limits decide `publish plan`'s verdict (roadmap step 12).
+
+- ADR-015: ffmpeg-skill `check`'s `duration` and `file size` rows are shown as guidance (`basis: "guidance"`, `in_verdict: false`, a `guidance` note naming the limit that decides) and left out of the verdict and the counts; this skill's cited `video.max_duration_s` and `video.max_bytes` decide. Every other ffmpeg-skill row (codec, frame size, aspect, frame rate) counts as before. A 5-minute video for X now passes on X's 20 minutes instead of failing ffmpeg-skill's 140 s table row.
+- Every plan row says whether it counts (`in_verdict`) and, when tied to the limit table, its `limit_status`: a documented limit with its `source` and `accessed` date, an unknown one with the pages `searched`, the date and a note (Facebook's size and duration), never an invented value.
+- `counts` gains `guidance`; human output prints guidance rows as `guidance` with ffmpeg-skill's status, not counted.
+- Contract, additive only: the `publish/plan` tool gains `verdict_rows`. No key is removed or renamed; the schema `publish/plan@1`, `verdicts`, `row_statuses` and `contract_version` 1.0 are unchanged.
+
 ## 0.1.0 - 2026-11-13
 
 First release: the tag `v0.1.0` and its GitHub Release (roadmap step 11, ADR-014). From now on a pushed `v*` tag makes the GitHub Release from its CHANGELOG.md section (`.github/workflows/release.yml`); nothing is published to a package index.
