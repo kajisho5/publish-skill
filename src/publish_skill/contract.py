@@ -11,7 +11,7 @@ from .credentials import PRECEDENCE, REDACTED, SOURCES
 from .doctor import DOCTOR_SCHEMA, FFMPEG_SKILL_ENV, IMPLEMENTED_OPS, OP_STEP
 from .errors import ERROR_TABLE
 from .limits import LIMITS
-from .plan import PLAN_SCHEMA, STATUSES
+from .plan import GUIDANCE_CHECKS, PLAN_SCHEMA, STATUSES
 from .platforms import get_platform, platform_ids
 from .series import RECEIPT_SCHEMA, SERIES_SCHEMA, STATE_SCHEMA
 from .upload import TOKEN_BINDS, TOKEN_PREFIX
@@ -37,6 +37,11 @@ _OP_TOOLS = {
                             "(`check`), offline (structured FAIL with a fix per row, nothing uploaded; exit 1 unless the "
                             "verdict is PASS or WARN)",
              "schema": PLAN_SCHEMA, "row_statuses": list(STATUSES), "verdicts": ["PASS", "WARN", "FAIL", "INCOMPLETE"],
+             # ADR-015: this skill's duration and file-size limits decide; ffmpeg-skill's rows for them are guidance
+             "verdict_rows": {"field": "in_verdict", "guidance": {"owner": "ffmpeg-skill", "checks": sorted(GUIDANCE_CHECKS),
+                                                                  "basis": "guidance", "in_verdict": False,
+                                                                  "decided_by": dict(GUIDANCE_CHECKS)},
+                              "counts_guidance": "counts.guidance"},
              "argv": ["plan", "<deliverable>", "--platform <id>"] + _METADATA_ARGV + ["[--ffmpeg-skill <dir>]", "--json"]},
     "upload": {"role": "execution", "network": True, "writes_media": False,
                "description": "Upload a deliverable, its thumbnail and captions to a platform (YouTube: the Data API v3 "

@@ -61,6 +61,7 @@ Metadata flags, identical on `plan` and `upload`: `--title`, `--description` or 
 - `UPLOAD_REJECTED` (exit 4): YouTube refused the request (`details.reasons`); nothing was published.
 - `AUTH_FAILED` (exit 3): the refresh token (YouTube) or the access token (Vimeo, TikTok, X, LinkedIn, Facebook, Instagram) was refused or lacks a scope (`details`); the user stores a new one with `publish auth login --platform <id>`.
 - `plan` verdict `FAIL` / `INCOMPLETE` (exit 1): report the failing or unchecked rows with their `fix`; do not upload.
+- A `plan` row with `in_verdict: false` (ffmpeg-skill's `duration` / `file size`, `basis: guidance`) is guidance only: this skill's own duration and size rows decide. Mention it if it is not PASS; do not treat it as a failure.
 - `METADATA_INVALID` (exit 2): the metadata breaks a limit; run `plan` to see which and how to fix it.
 - `NOT_IMPLEMENTED` (exit 5): the platform's uploader does not exist yet (each further platform is roadmap step 5). Say so; do not upload some other way.
 - `CREDENTIALS_MISSING` (exit 3): name the variables from `details.missing` and tell the user to set them in their environment or to run `publish auth login --platform <id>` themselves.

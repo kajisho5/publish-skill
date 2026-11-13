@@ -155,8 +155,10 @@ def _human(doc: Dict[str, Any]) -> None:
     elif "verdict" in doc:
         print(f"plan {doc['input']['path']} for {doc['platform']['name']}: {doc['verdict']} (nothing uploaded)")
         for r in doc["checks"]:
-            print(f"  {r['status']:9} {r['check']}: {r['value']!r} (limit {r['limit']!r}, {r['owner']})"
-                  + (f"  fix: {r['fix']}" if r.get("fix") and r["status"] != "PASS" else ""))
+            counts = r.get("in_verdict", True)
+            print(f"  {r['status'] if counts else 'guidance':9} {r['check']}: {r['value']!r} (limit {r['limit']!r}, {r['owner']}"
+                  + ("" if counts else f"; {r['status']}, not counted") + ")"
+                  + (f"  fix: {r['fix']}" if counts and r.get("fix") and r["status"] != "PASS" else ""))
         print(f"  {doc['next_step']}")
     elif "checks" in doc:
         print(f"{PACKAGE_NAME} {__version__}: {doc['status']}")
