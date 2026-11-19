@@ -3,10 +3,12 @@ name: Release guard
 # Trial of Velisa's reusable release-guard.yml (Velisa ADR-022, decision D36): the newest release
 # tag's contract/contract.json must say the tag's version. It releases nothing.
 
-# The tag is pushed by hand (docs/decisions.md ADR-014), so this runs on the tag push.
+# The release job (release.yml, on every push to main) pushes its tag with GITHUB_TOKEN, which starts no workflow, so this runs when
+# that job has finished.
 on:
-  push:
-    tags: ["v*"]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
