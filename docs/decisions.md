@@ -625,3 +625,26 @@ Roadmap step 12. For a platform's duration and file-size limits, this repository
 ### Follow-ups
 
 - When a platform's page is re-read, update `value`, `quote` and `accessed` together (ADR-002); the limits were read on 2026-10-31 and have not been re-verified since.
+
+## ADR-016 Releases on push to main: the version from pull request labels, the tag and the GitHub Release from one workflow
+
+2026-11-19.
+
+### Context
+
+Releases were cut by hand (ADR-014): a pull request bumped `pyproject.toml` and dated its CHANGELOG.md section, then `.github/workflows/release.yml` was run on main (a pushed `v*` tag, or by hand) to create the tag and GitHub Release. The latest release is `v0.2.1`. The other skills (audio-production-skill, video-editing-skill, color-grading-skill, motion-graphics-skill, qc-skill, subtitle-skill, transcription-skill and more) release from one workflow on push to main, with the version decided by pull request labels.
+
+### Decision
+
+- **`.github/workflows/release.yml` runs on every push to main**, the same job as video-editing-skill's. `.github/scripts/compute_version.sh` decides the version: when `pyproject.toml` equals the latest `v*` tag, release-drafter (dry run, `.github/release-drafter.yml`) resolves the next one from the labels of the pull requests merged since that tag (`feature` / `minor` / `enhancement`: minor; `major` / `breaking`: major; anything else, or no label: patch). Otherwise the `pyproject.toml` version is released as written: the first release, or a version a pull request bumped by hand.
+- **The release commit carries the version and the contract.** The job writes the version into `pyproject.toml`, regenerates `contract/contract.json` with `python contract/generate.py`, fails unless `--check` passes and the file reports that version, prepends the commit subjects since the last tag to CHANGELOG.md, commits `chore(release): vX.Y.Z`, pushes an annotated tag and creates the GitHub Release with the same notes. It is one job because a tag pushed with the default token starts no other workflow.
+- **Labels.** `.github/workflows/autolabel.yml` labels each pull request from its title, branch and files (`feature`, `fix`, `chore`, `documentation`). `major` / `breaking` is never applied from text, only by a person. A release-level label a bot put on a Dependabot pull request is removed before the version is resolved (`.github/scripts/dependabot_release_labels.py`).
+- **Nothing goes to a package index.** The skill is installed from a git checkout.
+
+### Consequences
+
+- The merge of this change is a push to main with `pyproject.toml` at the tagged 0.2.1, so it releases the next patch (this pull request is labelled `chore`), with `contract/contract.json` regenerated in the release commit.
+- A pull request no longer bumps the version or writes CHANGELOG.md by hand; it bumps `pyproject.toml` (and regenerates the contract file) only to choose a version the labels would not give. A major version is never chosen without a person's label.
+- The tag's `contract/contract.json` is that tag's own contract: `git show vX.Y.Z:contract/contract.json`.
+- This replaces the tag-push release of ADR-014; its first-release notes stay as they were.
+- `tests/test_release_scripts.py` (version decision and file bump, on throwaway repositories) and `tests/test_release_labels.py` (the Dependabot label rule and its wiring) cover the scripts.
