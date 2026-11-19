@@ -1,14 +1,14 @@
 # Changelog
 
-## v0.2.4 - 2026-11-19
+## 0.2.4 - 2026-11-19
 
 - ci: run contract-diff on every pull request (#29) (684e944)
 
-## v0.2.3 - 2026-11-19
+## 0.2.3 - 2026-11-19
 
 - ci: try Velisa's changelog-check and release-guard (#28) (719589c)
 
-## v0.2.2 - 2026-11-19
+## 0.2.2 - 2026-11-19
 
 - ci: release on push to main (version from PR labels, tag and GitHub Release) (#27) (b3084ab)
 - ci: call Velisa's contract-diff on contract changes, one run per pull request (#26) (8fdaefb)
