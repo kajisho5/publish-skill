@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.2 - 2026-11-19
+
+- ci: release on push to main (version from PR labels, tag and GitHub Release) (#27) (b3084ab)
+- ci: call Velisa's contract-diff on contract changes, one run per pull request (#26) (8fdaefb)
+
 ## 0.2.1 - 2026-11-19
 
 The contract as a committed file.
