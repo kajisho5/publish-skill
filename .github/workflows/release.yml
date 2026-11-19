@@ -72,6 +72,19 @@ jobs:
             exit 1
           fi
 
+      # contract/contract.json carries the version: a tag whose committed file is not its own contract output is refused
+      # A dispatch whose tag already exists releases that tag, so the tag's own commit is checked, not main.
+      - name: Check the committed contract file
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ] && git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            git fetch -q --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            git checkout -q "$TAG"
+          fi
+          python3 contract/generate.py --check
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

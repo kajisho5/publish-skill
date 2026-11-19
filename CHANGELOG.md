@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - 2026-11-19
+
+The contract as a committed file.
+
+- `contract/contract.json` is the `contract --json` output as one line with sorted keys, compact separators and a final newline, committed, so a release's contract is `git show vX.Y.Z:contract/contract.json` without running the code. `python contract/generate.py` regenerates it; `--check` (a unit test, and the release workflow before it creates a Release) fails when it is stale.
+- The contract itself is unchanged apart from its version.
+
 ## 0.2.0 - 2026-11-13
 
 This skill's duration and file-size limits decide `publish plan`'s verdict (roadmap step 12).
