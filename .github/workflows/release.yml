@@ -72,6 +72,10 @@ jobs:
             exit 1
           fi
 
+      # contract/contract.json carries the version: a tag whose committed file is not its own contract output is refused
+      - name: Check the committed contract file
+        run: python3 contract/generate.py --check
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
