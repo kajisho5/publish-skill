@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5 - 2026-11-19
+
+- fix(release): CHANGELOG headings in this file's form; test the release commit before pushing; no release for chore/ci/docs-only changes (#31) (2de8da5)
+
 ## 0.2.4 - 2026-11-19
 
 - ci: run contract-diff on every pull request (#29) (684e944)
