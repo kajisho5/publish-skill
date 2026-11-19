@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.3 - 2026-11-19
+
+- ci: try Velisa's changelog-check and release-guard (#28) (719589c)
+
 ## v0.2.2 - 2026-11-19
 
 - ci: release on push to main (version from PR labels, tag and GitHub Release) (#27) (b3084ab)
