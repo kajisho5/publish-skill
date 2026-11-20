@@ -29,6 +29,12 @@ NETWORK_MODULES = ["src/publish_skill/platforms/facebook.py", "src/publish_skill
 
 CONTRACT_VERSION = "1.0"
 CAPABILITY_IDS = {"plan": "publish.plan", "upload": "publish.upload"}
+# The 1.0 compatibility promise (ADR-018, Velisa ADR-031): a STABLE capability (and its tool) changes in a breaking way
+# only in a major release. `plan` is offline and deterministic, reads only this skill's cited limits and ffmpeg-skill's
+# `check`, and is what the agent runs before every upload. `upload` (and `series`, which maps to it) calls seven
+# third-party APIs, each tested against a local mock only (roadmap step 7 is the first real upload), so it stays
+# EXPERIMENTAL and may still change in a minor release.
+STABLE_OPS = frozenset({"plan"})
 _OP_TOOLS = {
     "plan": {"role": "measurement", "network": False, "writes_media": False,
              "description": "Check a deliverable and its title / description / tags / privacy / thumbnail / captions (and, on "
@@ -96,6 +102,12 @@ def tools() -> list:
     return out
 
 
+def _lifecycle(op: str) -> str:
+    if not IMPLEMENTED_OPS[op]:
+        return "PROPOSED"
+    return "STABLE" if op in STABLE_OPS else "EXPERIMENTAL"
+
+
 def contract() -> Dict[str, Any]:
     deps = [
         {"id": "ffmpeg-skill", "skill_id": "ffmpeg-skill", "kind": "skill", "required": False, "for": [CAPABILITY_IDS["plan"]],
@@ -116,8 +128,8 @@ def contract() -> Dict[str, Any]:
         "skill": {"id": SKILL_ID, "version": __version__, "package": PACKAGE_NAME},
         "version": __version__,
         "contract_version": CONTRACT_VERSION,
-        "provides": [{"id": CAPABILITY_IDS[op], "lifecycle": "EXPERIMENTAL" if IMPLEMENTED_OPS[op] else "PROPOSED",
-                      "tool_id": f"{SKILL_ID}/{op}"} for op in CAPABILITY_IDS],
+        "provides": [{"id": CAPABILITY_IDS[op], "lifecycle": _lifecycle(op), "tool_id": f"{SKILL_ID}/{op}"}
+                     for op in CAPABILITY_IDS],
         "dependencies": deps,
         "not_provided": ["platform delivery specs: codecs, resolution, bitrate, loudness (ffmpeg-skill owns them)",
                          "encoding or transcoding for a platform (ffmpeg-skill export)",

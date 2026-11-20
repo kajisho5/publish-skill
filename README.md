@@ -18,7 +18,7 @@
 
 Upload finished deliverables to delivery platforms (YouTube, Vimeo, TikTok, X, LinkedIn, Facebook and Instagram Reels) for the [AI Video Production OS](https://github.com/kajisho5/AI-video-production-OS) (department 納品 / Delivery), after QC and a human's confirmation. Platform delivery specs (codecs, resolution, loudness) belong to [ffmpeg-skill](https://github.com/kajisho5/ffmpeg-skill); this skill reads them and owns only the upload-side limits.
 
-**Status: 0.2.1.** `contract`, `doctor`, `platforms`, `plan`, `auth` and `upload` work. `upload` is a dry run unless it is given the exact confirmation token; then the YouTube uploader ([ADR-004](docs/decisions.md), [roadmap](ECOSYSTEM_ROADMAP.md) step 4) sends the video, its thumbnail and its captions with the YouTube Data API v3 resumable upload, the Vimeo uploader ([ADR-005](docs/decisions.md), step 5) sends the video with its title, description and privacy with Vimeo's tus resumable upload, and the TikTok uploader ([ADR-006](docs/decisions.md), step 5) posts the video with its title and privacy through the Content Posting API's Direct Post, and the X uploader ([ADR-007](docs/decisions.md), step 5) uploads the video with the X API v2 chunked media upload and makes one public post with the title as its text, and the LinkedIn uploader ([ADR-008](docs/decisions.md), step 5) uploads the video with the Videos API and makes one public post with the title as its commentary, and the Facebook uploader ([ADR-009](docs/decisions.md), step 5) uploads the video with the Resumable Upload API and publishes it on a Page with its title, description and privacy, and the Instagram Reels uploader ([ADR-010](docs/decisions.md), step 5) uploads the video to a resumable REELS container and publishes it with the title as its caption. All seven have been tested only against local mocks of the APIs, never against the platforms themselves: the first real upload to each is the owner's, with their credentials and their confirmation.
+**Status: 1.0.0** (`plan` is `STABLE`, `upload` `EXPERIMENTAL`: see "Compatibility promise (1.0)"). `contract`, `doctor`, `platforms`, `plan`, `auth` and `upload` work. `upload` is a dry run unless it is given the exact confirmation token; then the YouTube uploader ([ADR-004](docs/decisions.md), [roadmap](ECOSYSTEM_ROADMAP.md) step 4) sends the video, its thumbnail and its captions with the YouTube Data API v3 resumable upload, the Vimeo uploader ([ADR-005](docs/decisions.md), step 5) sends the video with its title, description and privacy with Vimeo's tus resumable upload, and the TikTok uploader ([ADR-006](docs/decisions.md), step 5) posts the video with its title and privacy through the Content Posting API's Direct Post, and the X uploader ([ADR-007](docs/decisions.md), step 5) uploads the video with the X API v2 chunked media upload and makes one public post with the title as its text, and the LinkedIn uploader ([ADR-008](docs/decisions.md), step 5) uploads the video with the Videos API and makes one public post with the title as its commentary, and the Facebook uploader ([ADR-009](docs/decisions.md), step 5) uploads the video with the Resumable Upload API and publishes it on a Page with its title, description and privacy, and the Instagram Reels uploader ([ADR-010](docs/decisions.md), step 5) uploads the video to a resumable REELS container and publishes it with the title as its caption. All seven have been tested only against local mocks of the APIs, never against the platforms themselves: the first real upload to each is the owner's, with their credentials and their confirmation.
 
 ```bash
 pip install -e .                                          # stdlib only, Python >= 3.9
@@ -394,6 +394,33 @@ Read from Meta's developer documentation on 2026-10-31 (`publish contract --json
 | `rate_limit.requests` | unknown (throttling is typed: codes 4, 17, 341) | not checked | searched: https://developers.facebook.com/docs/instagram-platform/content-publishing/ |
 | `token.scopes` | `instagram_basic`, `instagram_content_publish` (Facebook Login for Business) | reported | https://developers.facebook.com/docs/instagram-platform/content-publishing/ |
 | `token.lifetime_s` | unknown (not stated on the pages read) | not checked | searched: https://developers.facebook.com/docs/instagram-platform/content-publishing/ |
+
+## Compatibility promise (1.0)
+
+From 1.0.0 the release version follows the contract ([ADR-018](docs/decisions.md), Velisa ADR-031). `si contract-diff`
+on every pull request says whether a change is breaking, additive or neither.
+
+- **Covered (`STABLE`):**
+  - `publish/plan` (`publish.plan`): its arguments, the plan document (`schema`), the row statuses, the verdicts,
+    `verdict_rows` and the exit codes;
+  - the `contract` tool and the top-level contract fields that are not tied to an uploader;
+  - the JSON error shape (`{"ok": false, "error": {...}}`) and the error codes.
+
+  A breaking change to any of these ships only in a major release (2.0.0). An addition ships in a minor release, and
+  a release with no contract change is a patch.
+- **Experimental (`EXPERIMENTAL`):** `publish/upload` (`publish.upload`) and `publish/series`, which maps to it, with
+  their per-platform protocol, metadata and `not_provided` entries, and the helpers `auth`, `doctor` and `platforms`,
+  whose output follows the uploaders. Each uploader calls a third-party API that changes on the platform's schedule,
+  and none has made a real upload yet (roadmap step 7). These may still change in a minor release, and such a change
+  is named in its CHANGELOG entry. The upload-side limits in `upload_limits` are cited values and are updated when a
+  platform changes them.
+- **Never relaxed, in any release:** `upload` and `series` stay a dry run unless `--confirm` carries the exact token
+  for that file, metadata and platform, and credentials are never read from files or flags or printed (the Safety
+  section above).
+- **Deprecation:** a `STABLE` entry, or a parameter of `plan`, is first marked `DEPRECATED` (a parameter in its
+  description), with its replacement named here and in the CHANGELOG. It keeps working for at least one more minor
+  release and 30 days, and only a major release removes it. An entry is promoted from `EXPERIMENTAL` to `STABLE` in
+  any release, with no shape change: `provides[].lifecycle` in `contract/contract.json` says which is which.
 
 ## JSON and errors
 
