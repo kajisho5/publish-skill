@@ -86,9 +86,12 @@ class ContractTests(OfflineTestCase):
         for p in c["provides"]:
             self.assertEqual(set(p), {"id", "lifecycle", "tool_id"})
             self.assertIn(p["tool_id"], tool_ids)
-        # plan works since step 2 (ADR-002), the YouTube upload since step 4 (ADR-004)
+        # ADR-018 (1.0): plan is STABLE (breaking changes only in a major release); upload, which calls seven
+        # third-party APIs tested against local mocks only, stays EXPERIMENTAL
         self.assertEqual({p["id"]: p["lifecycle"] for p in c["provides"]},
-                         {"publish.plan": "EXPERIMENTAL", "publish.upload": "EXPERIMENTAL"})
+                         {"publish.plan": "STABLE", "publish.upload": "EXPERIMENTAL"})
+        self.assertLessEqual({p["lifecycle"] for p in c["provides"]},
+                             {"PROPOSED", "EXPERIMENTAL", "STABLE", "DEPRECATED", "RETIRED"})
         for d in c["dependencies"]:
             self.assertIsInstance(d["version_range"], str)
             self.assertFalse(d["version_range"].replace(".", "").isdigit(), d)

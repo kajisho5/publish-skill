@@ -667,3 +667,46 @@ Today's release commits wrote CHANGELOG.md headings as `## vX.Y.Z - date`. Every
 
 - A version bumped by hand in a pull request is released whatever its labels.
 - A release that fails the tests is not made; a later push retries.
+
+## ADR-018 1.0.0: `plan` is STABLE; `upload` and `series` stay EXPERIMENTAL; breaking changes to a STABLE entry ship only in a major release (Velisa ADR-031, D46)
+
+2026-11-20.
+
+### Context
+
+Velisa ADR-031 ranked the 0.x Skills by stability, and this skill came third:
+
+- 7 releases;
+- `si contract-diff` gave `none` between its last four measured tags, and the last four `contract:*` labels were `contract:none`;
+- no open roadmap step that changes the contract: step 7 (first real uploads on test accounts) is a field test;
+- one open issue, #30, a documentation follow-up (SKILL.md's "Fix every FAIL row" should say rows with `in_verdict: true`).
+
+The contract has two `provides[]` entries, `publish.plan` and `publish.upload`. `publish/series` maps to `publish.upload`. `auth`, `doctor`, `platforms` and `contract` have none.
+
+### Decision
+
+- `provides[].lifecycle` is `STABLE` for `publish.plan` (`publish/plan`):
+  - it is offline and deterministic, and reads only this skill's cited limits and ffmpeg-skill's `check`;
+  - its shape has been settled since 0.2.0 (ADR-015, the verdict rows), and step 12 was its last contract change;
+  - video-production-agent runs it before every upload.
+- `publish.upload` (`publish/upload`, and `publish/series` with it) stays `EXPERIMENTAL`:
+  - all seven uploaders call third-party APIs (YouTube Data API v3, Vimeo, TikTok Content Posting, X API v2, LinkedIn Videos and Posts, Facebook Resumable Upload, Instagram Reels). Their endpoints, scopes, limits and accepted fields change on each platform's schedule;
+  - each uploader is tested against a local mock only. No real upload has been made (roadmap step 7), so the first real upload may need a change to its protocol block or metadata fields;
+  - the request shape of `upload` grows per platform (`--embed-domain`, `--publish-at`, `--localizations`), and the per-platform `not_provided` list shrinks as fields are supported.
+- `auth`, `doctor` and `platforms` have no `provides[]` entry. Their output follows the uploaders, so they are experimental too. The README says so.
+- The `contract` tool, the top-level fields not tied to an uploader, the JSON error shape and the error codes are covered, as Velisa ADR-031 section 1 says.
+- The safety rules of ADR-001 and ADR-003 are not relaxed in any release, whatever an entry's lifecycle: no upload without the exact confirmation token, and no credential from a file or a flag, or printed.
+- The README's "Compatibility promise (1.0)" section is the promise: what it covers, what stays experimental, and the deprecation rule (Velisa ADR-031 section 3).
+
+### Release
+
+The contract change is a lifecycle promotion only, which `si contract-diff` classifies `none` (rule `lifecycle-promoted`). `contract_version` stays `1.0`.
+
+The version goes 0.2.5 -> 1.0.0 through the existing flow (ADR-016, ADR-017). The pull request carries the `major` label: release-drafter's `version-resolver` maps it to a major bump, and `release_gate.py` counts it as release-level. No workflow change was needed. Because the diff is `none`, video-production-agent's re-pin widens its gate to `1.0.` (its ADR-117 addendum 3).
+
+### Consequences
+
+- From the 1.0.0 tag, a pull request labelled `contract:breaking` needs `major` (`major-label-check.yml`, Velisa ADR-031 section 5). A break limited to `upload` or `series` is allowed in a minor release: the reviewer checks that, names it in the CHANGELOG and removes the label by hand.
+- `publish.upload` is promoted to `STABLE` once each uploader it keeps has made a real upload (step 7). That promotion is metadata only and can ship in any release.
+
+Tests: `tests/test_unit.py::ContractTests::test_os_registry_keys_and_provides`.
