@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 - 2026-11-20
+
+- feat!: 1.0.0 — plan is STABLE; upload and series stay EXPERIMENTAL; breaking changes to a STABLE entry only in a major release (ADR-018) (#35) (920ff13)
+- ci: a contract:breaking pull request on 1.x needs the major label (Velisa ADR-031 section 5) (#34) (2988a54)
+- ci: release gate leaves contract:* labels out of the count (#33) (9fff3cb)
+- ci: dependencies pull requests release a patch (Velisa D37 addendum) (#32) (da78be8)
+
 ## 0.2.5 - 2026-11-19
 
 - fix(release): CHANGELOG headings in this file's form; test the release commit before pushing; no release for chore/ci/docs-only changes (#31) (2de8da5)
